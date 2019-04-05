@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/git-commands/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/CohenBerkeleyLab/BEHR-PSM-Gridding.git
+	branch = feature/3d-cvm-no-scipy
+	commit = b78d7b2d7c85bf03e5f01f946ab3ca8f6f477e18
+	parent = 7ccb857d6e150c777f00c88a323aa52a7db3ff67
+	method = merge
+	cmdver = 0.4.0

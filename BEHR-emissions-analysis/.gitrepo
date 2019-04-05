@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/git-commands/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/behr-github/BEHR-emissions-analysis.git
+	branch = no-oh
+	commit = beb90921378282ddf515e198f532ea5e18eca92c
+	parent = 7a1caf02795337d1a4ba338de15ce6cf9de1dde2
+	method = merge
+	cmdver = 0.4.0

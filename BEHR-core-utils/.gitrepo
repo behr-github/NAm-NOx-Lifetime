@@ -1,0 +1,12 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/git-commands/git-subrepo#readme
+;
+[subrepo]
+	remote = https://github.com/CohenBerkeleyLab/BEHR-core-utils.git
+	branch = josh-dev
+	commit = b6e734ce59ff4db84396af2625c0e62c837aa863
+	parent = fb6466068803517e1a58c1c705b13ee404c904d0
+	method = merge
+	cmdver = 0.4.0

@@ -3,15 +3,17 @@ function lifetime_paper_figs
 do_save = true;
 do_close = false;
 
-analysis_years = [2006:2013];
-% 
-%theoretical_lifetime_plot();
-% expected_vcds_plot();
-%lifetime_groups_plot();
-%lifetime_ens_plot();
-% weekend_weekday_diff();
-no2_hcho_ratio_plot();
+mydir = fileparts(mfilename('fullpath'));
+images_dir = fullfile(mydir, '..', 'Images');
+supp_dir = fullfile(images_dir, 'Supplement');
 
+theoretical_lifetime_plot();
+expected_vcds_plot();
+lifetime_groups_plot();
+no2_hcho_ratio_plot();
+lifetime_ens_plot();
+weekend_weekday_diff();
+make_t_table();
 
     function theoretical_lifetime_plot
         VOCr = [1, 5, 10];
@@ -25,15 +27,7 @@ no2_hcho_ratio_plot();
         l_main = gobjects(numel(VOCr),1);
         l_supp = gobjects(numel(VOCr),1);
         
-%         T = linspace(298, 292, 10);
-%         z = linspace(0, 1, 10);
-%         p = 101325 .* exp(-z./7.4);
-%         R = 8.314 .* 100^3 ./ 6.022e23;
-%         ndens = p ./ (R .* T);
-%         nox_conv = trapz(z*1e5, ndens);
-        
         for i_vocr = 1:numel(VOCr)
-            %logspace(-10,-8,50)
             [tau, tau_hno3, tau_ans, nox, species] = nox_lifetime(logspace(-11,-8,70)*2e19, 'vocr', VOCr(i_vocr));
             % plot with NOx as NO2 VCDs assuming a 1 km PBL, a 6 K/km lapse
             % rate, a 4:1 NO2:NO ratio, and a 5e14 free trop background
@@ -96,8 +90,8 @@ no2_hcho_ratio_plot();
         ccd_cities = cities_lifetime_groups.ccdown_lifetime;
         cities = {decr_cities, incr_cities, ccu_cities, ccd_cities};
         
-        common_opts = {'plot_quantity', 'Lifetime', 'normalize', true, 'window_width', 3,...
-            'remove_decreasing_cities', false, 'always_restrict_to_moves', false,...
+        common_opts = {'plot_quantity', 'Lifetime', 'normalize', true,...
+            'always_restrict_to_moves', false,...
             'req_most', false, 'req_num_pts', false};
         for i=1:numel(cities)
             ax = subplot(4,1,i);
@@ -135,8 +129,8 @@ no2_hcho_ratio_plot();
         ccd_cities = cities_lifetime_groups.ccdown_lifetime;
         cities = {decr_cities, incr_cities, ccu_cities, ccd_cities};
         
-        common_opts = {'plot_quantity', 'Lifetime', 'normalize', false, 'window_width', 3,...
-            'remove_decreasing_cities', false, 'always_restrict_to_moves', false,...
+        common_opts = {'plot_quantity', 'Lifetime', 'normalize', false,...
+            'always_restrict_to_moves', false,...
             'req_most', false, 'req_num_pts', false};
         for i=1:numel(cities)
             ax = subplot(2,2,i);
@@ -154,8 +148,8 @@ no2_hcho_ratio_plot();
     function expected_vcds_plot()
         % top panel: individual cities' predicted VCDs (normalized?)
         % bottom panel: normalized average MOVES, VCDS, and expected VCDs
-        common_opts = {'normalize', false, 'window_width', 3,...
-            'remove_decreasing_cities', false, 'always_restrict_to_moves', true,...
+        common_opts = {'normalize', false,...
+            'always_restrict_to_moves', true,...
             'req_most', true, 'req_num_pts', false, 'incl_err', false};
         [~,yrs,moves_emis] = misc_emissions_analysis.plot_avg_lifetime_change(...
             'plot_averaging','None','plot_quantity','MOVES','no_fig',true,common_opts{:});
@@ -201,7 +195,7 @@ no2_hcho_ratio_plot();
 
     function weekend_weekday_diff()
         common_opts = {'plot_quantity', 'Weekend - weekday lifetime', 'plot_averaging', 'Median', 'normalize', false,...
-            'window_width', 3, 'remove_decreasing_cities', false, 'always_restrict_to_moves', false,...
+            'always_restrict_to_moves', false,...
             'req_most', false, 'req_num_pts', false, 'incl_err', false, 'no_fig', true};
         
         cities = cell(4,1);
@@ -226,15 +220,22 @@ no2_hcho_ratio_plot();
             save_the_fig(fig, 'weekend-weekday-lifetime-diffs', true);
         end
     end
-end
 
-function save_the_fig(fig, filename, is_supp)
-mydir = fileparts(mfilename('fullpath'));
-images_dir = fullfile(mydir, '..', 'Images');
-if is_supp
-    images_dir = fullfile(images_dir, 'Supplement');
-end
+    function make_t_table()
+        csv_file = fullfile(supp_dir, 'key_years_t_scores.csv');
+        misc_emissions_analysis.make_t_score_table(csv_file, 'TWRF')
+    end
 
-fullname = fullfile(images_dir, filename);
-save_fig_paper_formats(fig, fullname);
+    function save_the_fig(fig, filename, is_supp)
+        
+        if is_supp
+            save_dir = supp_dir;
+        else
+            save_dir = images_dir;
+        end
+        
+        fullname = fullfile(save_dir, filename);
+        save_fig_paper_formats(fig, fullname);
+    end
+
 end

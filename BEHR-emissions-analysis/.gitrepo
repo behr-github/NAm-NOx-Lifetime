@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/behr-github/BEHR-emissions-analysis.git
 	branch = no-oh
-	commit = beb90921378282ddf515e198f532ea5e18eca92c
-	parent = 7a1caf02795337d1a4ba338de15ce6cf9de1dde2
+	commit = a9a6b04620a945adf99678598e146516a0b29f32
+	parent = 5c55781e060e8ad1cb4c5ccd1ea4e888c199f35d
 	method = merge
 	cmdver = 0.4.0

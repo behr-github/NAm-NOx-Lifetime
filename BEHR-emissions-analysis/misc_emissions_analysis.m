@@ -3144,19 +3144,19 @@ classdef misc_emissions_analysis
             end
         end
         
-        function plot_diff_sig_grid(years, values, errors, dofs, varargin)
+        function [is_diff, t_calc_all, t_table_all] = plot_diff_sig_grid(years, values, errors, dofs, varargin)
             % PLOT_DIFF_SIG_GRID(YEARS, VALUES, ERRORS, DOFS) Given the
-            % values, errors (as standard deviations), and numbers of
-            % degrees of freedom for values for each year in YEARS, plot a
-            % grid indicating which differences are significant. All inputs
-            % are numeric vectors.
+            % values, errors, and numbers of degrees of freedom for values
+            % for each year in YEARS, plot a grid indicating which
+            % differences are significant. All inputs are numeric vectors.
             %
             % Parameters:
             %   'is_fit_good' - provide a vector the the same length as
             %   VALUES that is true for good fits, false for bad fits. Bad
             %   fits will not be included.
             %
-            %   'parent' - axis to plot into
+            %   'parent' - axis to plot into. Set to false to not plot and
+            %   just return the values.
             p = advInputParser;
             p.addOptional('is_fit_good', []);
             p.addParameter('parent', []);
@@ -3169,9 +3169,12 @@ classdef misc_emissions_analysis
             end
             
             ax = pout.parent;
+            do_plot = true;
             if isempty(ax)
                 figure;
                 ax = axes();
+            elseif ~ax
+                do_plot = false;
             end
             
             n_yrs = numel(years);
@@ -3184,6 +3187,8 @@ classdef misc_emissions_analysis
             end
             
             is_diff = nan(n_yrs, n_yrs);
+            t_calc_all = nan(n_yrs, n_yrs);
+            t_table_all = nan(n_yrs, n_yrs);
             for i_yr = 1:n_yrs
                 for j_yr = (i_yr+1):n_yrs
                     yr_vals = values([i_yr, j_yr])';
@@ -3206,21 +3211,26 @@ classdef misc_emissions_analysis
                         yr_err = [errors(i_yr, 1), errors(j_yr, 2)];
                     end
                     yr_dofs = dofs([i_yr, j_yr])';
-
-                    sig = misc_emissions_analysis.is_change_significant_alt(yr_vals, yr_err, yr_dofs);
+                    [sig, t_calc, t_table] = misc_emissions_analysis.is_change_significant_alt(yr_vals, yr_err, yr_dofs);
+                    
                     is_diff(i_yr, j_yr) = sig;
                     is_diff(j_yr, i_yr) = sig;
+                    t_calc_all(i_yr, j_yr) = t_calc;
+                    t_calc_all(j_yr, i_yr) = t_calc;
+                    t_table_all(i_yr, j_yr) = t_table;
+                    t_table_all(j_yr, i_yr) = t_table;
                 end
             end
             
-            xx_yes = is_diff == 1;
-            xx_no = is_diff == 0;
-            line(ax, year_x(xx_yes), year_y(xx_yes), 'marker', 'o', 'color', [0 0.7 0], 'markersize', 10, 'markerfacecolor', [0 0.7 0], 'linestyle','none');
-            line(ax, year_x(xx_no), year_y(xx_no), 'marker', 'x', 'color', 'r', 'markersize', 10, 'markerfacecolor', 'r', 'linestyle','none','linewidth',2);
-            set(gca,'XTick',years,'YTick',years);
-            xlim([years(1)-1, years(end)+1])
-            ylim([years(1)-1, years(end)+1])
-            
+            if do_plot
+                xx_yes = is_diff == 1;
+                xx_no = is_diff == 0;
+                line(ax, year_x(xx_yes), year_y(xx_yes), 'marker', 'o', 'color', [0 0.7 0], 'markersize', 10, 'markerfacecolor', [0 0.7 0], 'linestyle','none');
+                line(ax, year_x(xx_no), year_y(xx_no), 'marker', 'x', 'color', 'r', 'markersize', 10, 'markerfacecolor', 'r', 'linestyle','none','linewidth',2);
+                set(gca,'XTick',years,'YTick',years);
+                xlim([years(1)-1, years(end)+1])
+                ylim([years(1)-1, years(end)+1])
+            end
         end
         
         function figs = plot_lifetime_vs_mass(varargin)
@@ -4101,9 +4111,9 @@ classdef misc_emissions_analysis
             
             function [locs_wkday, locs_wkend] = load_behr_tau(this_year_window)
                 fits = load(misc_emissions_analysis.behr_fit_file_name(this_year_window, 'TWRF'));
-                locs_wkday = fits.locs;
-                fits = load(misc_emissions_analysis.behr_fit_file_name(this_year_window, 'TWRF'));
-                locs_wkend = fits.locs;
+                locs_wkday = misc_emissions_analysis.append_new_spreadsheet_fields(fits.locs);
+                fits = load(misc_emissions_analysis.behr_fit_file_name(this_year_window, 'US'));
+                locs_wkend = misc_emissions_analysis.append_new_spreadsheet_fields(fits.locs);
             end
             
             function [locs_wkday, locs_wkend] = load_wrf_tau(this_year_window)
@@ -4221,7 +4231,86 @@ classdef misc_emissions_analysis
             
         end
 
+        function make_t_score_table(csv_file, dow)
+            years = 2006:2013;
+            cities = cell(4,1);
+            cities{1} = cities_lifetime_groups.decr_lifetime;
+            cities{2} = cities_lifetime_groups.incr_lifetime;
+            cities{3} = cities_lifetime_groups.ccup_lifetime;
+            cities{4} = cities_lifetime_groups.ccdown_lifetime;
+            cities = sort(veccat(cities{:}));
+            cities_inds = misc_emissions_analysis.convert_input_loc_inds(cities);
+            
+            n_years = numel(years);
+            n_locs = numel(cities);
+            
+            taus = nan(n_years, n_locs);
+            tau_errors = nan(n_years, n_locs);
+            tau_dofs = nan(n_years, n_locs);
+            fits_good_any_num = false(n_years, n_locs);
+            t_calc = nan(n_years, n_years, n_locs);
+            t_table = nan(n_years, n_years, n_locs);
+            
+            for i_yr = 1:n_years
+                yr = years(i_yr);
+                yr_win = (yr-1):(yr+1);
+                fprintf('Working on %s\n', sprintf_ranges(yr_win));
+                
+                fits = load(misc_emissions_analysis.behr_fit_file_name(yr_win, dow));
+                locs = misc_emissions_analysis.cutdown_locs_by_index(fits.locs, cities_inds);
+                
+                for i_loc = 1:n_locs
+                    taus(i_yr, i_loc) = get_tau(locs(i_loc).emis_tau.tau);
+                    tau_errors(i_yr, i_loc) = get_tau(locs(i_loc).emis_tau.tau_uncert);
+                    tau_dofs(i_yr, i_loc) = get_tau(locs(i_loc).emis_tau.n_dofs);
 
+                    fits_good_any_num(i_yr, i_loc) = misc_emissions_analysis.is_fit_good_by_loc(locs(i_loc), 'any_num_pts', true, 'DEBUG_LEVEL', 1);
+                end
+            end
+            
+            for i_loc = 1:n_locs
+                [~, t_calc(:, :, i_loc), t_table(:, :, i_loc)] = misc_emissions_analysis.plot_diff_sig_grid(years, taus(:, i_loc), tau_errors(:, i_loc), tau_dofs(:, i_loc), fits_good_any_num(:, i_loc), 'parent', false);
+            end
+            
+            fid = fopen(csv_file, 'w');
+            fprintf(fid, 'City,Years,tcalc,ttable,Years,tcalc,ttable\n');
+            for i_city = 1:numel(cities)
+                this_city = cities{i_city};
+                key_yrs = cities_lifetime_groups.get_key_years(this_city, dow);
+                key_yr_inds = year_inds(key_yrs);
+                line_cell = {this_city, '', '', '', '', '', ''};
+                for i_yr = 1:(numel(key_yrs)-1)
+                    yridx = key_yr_inds(i_yr:i_yr+1);
+                    this_t_calc = t_calc(yridx(1), yridx(2), i_city);
+                    this_t_table = t_table(yridx(1), yridx(2), i_city);
+                    
+                    if isnan(this_t_calc) || isnan(this_t_table)
+                        error('Got NaN t values')
+                    end
+                    
+                    i_cell = (i_yr-1)*3+2;
+                    line_cell{i_cell} = sprintf('%d->%d', key_yrs(i_yr), key_yrs(i_yr+1));
+                    line_cell{i_cell+1} = sprintf('%.2f', this_t_calc);
+                    line_cell{i_cell+2} = sprintf('%.2f', this_t_table);
+                end
+                
+                fprintf(fid, '%s\n', strjoin(line_cell, ','));
+            end
+            fclose(fid);
+            
+            function tau = get_tau(tau)
+                if isempty(tau)
+                    tau = NaN;
+                end
+            end
+            
+            function inds = year_inds(key_yrs)
+                inds = nan(size(key_yrs));
+                for iy = 1:numel(key_yrs)
+                    inds(iy) = find(years == key_yrs(iy));
+                end
+            end
+        end
         
         function plot_lifetime_with_sig(varargin)
             % PLOT_LIFETIME_WITH_SIG Plot weekday and weekend lifetimes for
@@ -5712,7 +5801,7 @@ classdef misc_emissions_analysis
             end
         end
         
-        function difference_is_significant = is_change_significant_alt(values, value_sds, value_dofs)
+        function [difference_is_significant, t_calc_out, t_table_out] = is_change_significant_alt(values, value_sds, value_dofs)
             % IS_CHANGE_SIGNIFICANT_ALT( VALUES, VALUE_SDS, VALUE_DOFS )
             % Calculate if the changes in a set of values are significant.
             % VALUES, VALUE_SDS, and VALUE_DOFS are n-by-2 matrices of the
@@ -5720,7 +5809,10 @@ classdef misc_emissions_analysis
             % of freedom in the fits. The first column is the inital
             % values, the second column the final. Returns an n-by-1
             % boolean vector indicating if the changes are significant.
-            difference_is_significant = false(size(values,1),1);
+            sz = [size(values,1), 1];
+            difference_is_significant = false(sz);
+            t_calc_out = nan(sz);
+            t_table_out = nan(sz);
             for i_chng = 1:size(values,1)
                 if any(isnan(values(i_chng,:))) || any(isnan(value_sds(i_chng,:))) || any(imag(value_sds(i_chng,:)) ~= 0) || any(isnan(value_dofs(i_chng,:)))
                     difference_is_significant(i_chng) = false;
@@ -5729,9 +5821,11 @@ classdef misc_emissions_analysis
                     % measurements is the number of DoFs + 5.
                     %[~, ~, sig] = two_sample_t_test_alt(values(i_chng,1), value_sds(i_chng, 1), value_dofs(i_chng,1)+5,...
                     %    values(i_chng,2), value_sds(i_chng,2), value_dofs(i_chng,2)+5);
-                    [~, ~, sig] = two_sample_t_test_alt(values(i_chng,1), value_sds(i_chng, 1), value_dofs(i_chng,1),...
+                    [t_calc, t_table, sig] = two_sample_t_test_alt(values(i_chng,1), value_sds(i_chng, 1), value_dofs(i_chng,1),...
                         values(i_chng,2), value_sds(i_chng,2), value_dofs(i_chng,2));
                     difference_is_significant(i_chng) = sig;
+                    t_calc_out(i_chng) = t_calc;
+                    t_table_out(i_chng) = t_table;
                 end
             end
         end

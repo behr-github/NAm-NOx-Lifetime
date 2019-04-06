@@ -43,7 +43,7 @@ classdef cities_lifetime_groups
             weekdays.NewOrleans = [2007, 2009, 2012];
             weekdays.NewYork = [2006, 2011, 2013];
             weekdays.StLouis = [2006, 2007, 2013];
-            weekdays.Tampa = [2006, 2011, 2013];
+            weekdays.Tampa = [2006, 2011];
             
             weekdays.Chicago = [2006, 2007, 2010, 2012];
             weekdays.Detroit = [2006, 2009, 2012, 2013];
@@ -169,7 +169,7 @@ classdef cities_lifetime_groups
             % INCR_LIFETIME( INCLUDE_SHORT ) Return the list of cities with 
             % increasing lifetime. Set INCLUDE_SHORT to true or omit to
             % include cities with < 60 points in their line densities.
-            cities = {'Pittsburgh', 'Reno', 'San Francisco', 'Toronto', 'Tucson'};
+            cities = {'Omaha', 'Pittsburgh', 'Reno', 'San Francisco', 'Toronto', 'Tucson'};
             %cities = {'Pittsburgh', 'Reno', 'Toronto', 'Tucson'};
             if nargin < 1 || include_short 
                 cities = veccat(cities, {'Columbus','Orlando', 'San Diego', 'Tampa'});
@@ -181,7 +181,7 @@ classdef cities_lifetime_groups
             % CCUP_LIFETIME( INCLUDE_SHORT ) Return the list of cities with 
             % concave up lifetime. Set INCLUDE_SHORT to true or omit to
             % include cities with < 60 points in their line densities.
-            cities = {'Dallas', 'Los Angeles', 'Memphis', 'Omaha'};
+            cities = {'Dallas', 'Los Angeles', 'Memphis'};
             if nargin < 1 || include_short 
                 cities = veccat(cities, {'Cleveland','Knoxville', 'Philadelphia', 'Washington DC'});
             end

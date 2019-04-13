@@ -3742,6 +3742,7 @@ classdef misc_emissions_analysis
             p.addParameter('always_restrict_to_moves', nan);
             p.addParameter('no_fig', false);
             p.addParameter('allow_missing_vcds', false);
+            p.addParameter('exclude_bad_fits', true);
             p.addParameter('req_most', nan);
             p.addParameter('req_num_pts', nan);
             p.addParameter('incl_err', nan);
@@ -3752,6 +3753,7 @@ classdef misc_emissions_analysis
             location_inds_or_names = pout.locations;
             do_plot_fig = ~pout.no_fig;
             allow_missing_vcds = pout.allow_missing_vcds;
+            exclude_bad_fits = pout.exclude_bad_fits;
             ax = pout.ax;
             
             % options for the quantity to plot
@@ -3884,13 +3886,21 @@ classdef misc_emissions_analysis
                         weekend_errs(i_loc,i_yr) = this_weekend_err;
                     end
                 end
-                good_week_fits = misc_emissions_analysis.is_fit_good_by_loc(week_locs, 'DEBUG_LEVEL', 0, 'any_num_pts', ~req_num_pts);
+                
+                if exclude_bad_fits
+                    good_week_fits = misc_emissions_analysis.is_fit_good_by_loc(week_locs, 'DEBUG_LEVEL', 0, 'any_num_pts', ~req_num_pts);
+                    good_weekend_fits = misc_emissions_analysis.is_fit_good_by_loc(weekend_locs, 'DEBUG_LEVEL', 0, 'any_num_pts', ~req_num_pts);
+                else
+                    good_week_fits = true(size(week_vals,1),1);
+                    good_weekend_fits = true(size(weekend_vals,1),1);
+                end
+                
                 week_vals(~good_week_fits,i_yr) = nan;
                 week_errs(~good_week_fits,i_yr) = nan;
                 week_vcds(~good_week_fits,i_yr) = nan;
-                good_weekend_fits = misc_emissions_analysis.is_fit_good_by_loc(weekend_locs, 'DEBUG_LEVEL', 0, 'any_num_pts', ~req_num_pts);
+                
                 weekend_vals(~good_weekend_fits,i_yr) = nan;
-                weekend_errs(~good_week_fits,i_yr) = nan;
+                weekend_errs(~good_weekend_fits,i_yr) = nan;
                 weekend_vcds(~good_weekend_fits,i_yr) = nan;
             end
             
@@ -4143,11 +4153,20 @@ classdef misc_emissions_analysis
             p = advInputParser;
             p.addParameter('radius', 'by_loc');
             p.addParameter('plot_mode', 'timeser-avg'); % 'scatter', 'scatter-avg', 'timeser', or 'timeser-avg'
+            p.addParameter('ax', []);
             p.parse(varargin{:});
             pout = p.Results;
             
             plot_mode = pout.plot_mode;
             vcd_radius = pout.radius;
+            ax = pout.ax;
+            
+            if isempty(ax)
+                fig = figure;
+                ax = gca;
+            else
+                fig = ax.Parent;
+            end
             
             cities = cell(1,4);
             cities_names = {'Decreasing', 'Increasing', 'CCU', 'CCD'};
@@ -4203,7 +4222,7 @@ classdef misc_emissions_analysis
                 end
             end
             
-            fig = figure;
+            
             lall = gobjects(numel(cities),1);
             for i_grp = 1:numel(cities)
                 if regcmpi(plot_mode, '^scatter')
@@ -4213,15 +4232,15 @@ classdef misc_emissions_analysis
                     end
                     % If plotting unaveraged points, will get an array of lines. Just keep
                     % the first one for the legend.
-                    l = line(no2{i_grp}, hcho{i_grp}, group_styles(i_grp));
+                    l = line(ax, no2{i_grp}, hcho{i_grp}, group_styles(i_grp));
                     lall(i_grp) = l(1);
                 elseif regcmpi(plot_mode, '^timeser')
+                    ratio = hcho{i_grp} ./ no2{i_grp};
                     if regcmpi(plot_mode, 'avg$')
-                        ratio = nanmean(hcho{i_grp} ./ no2{i_grp}, 2);
-                    else
-                        ratio = hcho{i_grp} ./ no2{i_grp};
+                        %ratio(ratio<0) = nan;
+                        ratio = nanmean(ratio, 2);
                     end
-                    l = line(years, ratio, group_styles(i_grp));
+                    l = line(ax, years, ratio, group_styles(i_grp));
                     lall(i_grp) = l(1);
                 end
             end
@@ -5253,6 +5272,8 @@ classdef misc_emissions_analysis
             p.addParameter('plot_ld', true);
             p.addParameter('plot_fit', true);
             p.addParameter('source', 'behr');
+            p.addParameter('include_bad', false);
+            p.addParameter('include_weekends', true);
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -5267,12 +5288,13 @@ classdef misc_emissions_analysis
             plot_line_dens = pout.plot_ld;
             plot_fit = pout.plot_fit;
             data_source = pout.source;
+            include_bad_fits = pout.include_bad;
+            include_weekends = pout.include_weekends;
             
             if strcmpi(data_source, 'behr')
                 wrf_bool = false;
                 weekdays = 'TWRF';
                 n_subplots = 2;
-                include_weekends = true;
                 ld_scale = 1;
             elseif strcmpi(data_source, 'wrf')
                 wrf_bool = true;
@@ -5302,21 +5324,30 @@ classdef misc_emissions_analysis
                 
                 for i_loc = 1:n_locs
                     xx = loc_inds(i_loc);
+                    if include_bad_fits || misc_emissions_analysis.is_fit_good_by_loc(FitsTWRF.locs(xx), 'any_num_pts', true)
+                        ld_twrf = normalize_y(FitsTWRF.locs(xx).no2_sectors.linedens*ld_scale, FitsTWRF.locs(xx));
+                        fit_twrf = normalize_y(FitsTWRF.locs(xx).fit_info.emgfit, FitsTWRF.locs(xx));
+                        x_twrf = normalize_x(FitsTWRF.locs(xx).no2_sectors.x, ld_twrf, fit_twrf, FitsTWRF.locs(xx));
+                        xcoords{i_loc, i_yr, 1} = x_twrf;
+                        line_densities{i_loc, i_yr, 1} = ld_twrf;
+                        fits{i_loc, i_yr, 1} = fit_twrf;
+                    else
+                        xcoords{i_loc, i_yr, 1} = nan;
+                        line_densities{i_loc, i_yr, 1} = nan;
+                        fits{i_loc, i_yr, 1} = nan;
+                    end
                     
-                    ld_twrf = normalize_y(FitsTWRF.locs(xx).no2_sectors.linedens*ld_scale, FitsTWRF.locs(xx));
-                    fit_twrf = normalize_y(FitsTWRF.locs(xx).fit_info.emgfit, FitsTWRF.locs(xx));
-                    x_twrf = normalize_x(FitsTWRF.locs(xx).no2_sectors.x, ld_twrf, fit_twrf, FitsTWRF.locs(xx));
-                    xcoords{i_loc, i_yr, 1} = x_twrf;
-                    line_densities{i_loc, i_yr, 1} = ld_twrf;
-                    fits{i_loc, i_yr, 1} = fit_twrf;
-                    
-                    if include_weekends
+                    if include_weekends && (include_bad_fits || misc_emissions_analysis.is_fit_good_by_loc(FitsUS.locs(xx), 'any_num_pts', true))
                         ld_us = normalize_y(FitsUS.locs(xx).no2_sectors.linedens*ld_scale, FitsUS.locs(xx));
                         fit_us = normalize_y(FitsUS.locs(xx).fit_info.emgfit, FitsUS.locs(xx));
                         x_us = normalize_x(FitsUS.locs(xx).no2_sectors.x, ld_us, fit_us, FitsUS.locs(xx));
                         xcoords{i_loc, i_yr, 2} = x_us;
                         line_densities{i_loc, i_yr, 2} = ld_us;
                         fits{i_loc, i_yr, 2} = fit_us;
+                    else
+                        xcoords{i_loc, i_yr, 2} = nan;
+                        line_densities{i_loc, i_yr, 2} = nan;
+                        fits{i_loc, i_yr, 2} = nan;
                     end
                 end
             end

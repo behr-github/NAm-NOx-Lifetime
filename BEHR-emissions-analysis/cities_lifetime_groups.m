@@ -153,6 +153,16 @@ classdef cities_lifetime_groups
             end
         end
         
+        function cities = all_groups(include_short)
+            if nargin < 1
+                include_short = true;
+            end
+            cities = veccat(cities_lifetime_groups.decr_lifetime(include_short),...
+                            cities_lifetime_groups.incr_lifetime(include_short),...
+                            cities_lifetime_groups.ccup_lifetime(include_short),...
+                            cities_lifetime_groups.ccdown_lifetime(include_short));
+        end
+        
         function cities = decr_lifetime(include_short)
             % DECR_LIFETIME( ) 
             % DECR_LIFETIME( INCLUDE_SHORT ) Return the list of cities with 

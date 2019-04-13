@@ -6,7 +6,7 @@
 [subrepo]
 	remote = https://github.com/CohenBerkeleyLab/Matlab-Gen-Utils.git
 	branch = josh-dev
-	commit = 55443c841a358fa919361ceea7a728bdd87faf95
-	parent = af26045266ed89d42c3a4d9f5153cd7e1734e138
+	commit = af11417e3191e27360380cc24ed92e4c7fb57e85
+	parent = ad4fd13e0f682e724715519310e8021e050cb35d
 	method = merge
 	cmdver = 0.4.0

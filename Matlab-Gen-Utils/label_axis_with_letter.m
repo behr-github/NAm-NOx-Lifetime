@@ -25,18 +25,11 @@ function [ varargout ] = label_axis_with_letter( label, varargin )
 %       16.
 
 E = JLLErrors;
-if isnumeric(label) && isscalar(label)
-    if label > 26
-        warning('Numeric value of LABEL exceeds number of letters in alphabet');
-    end
-    label = sprintf('(%s)',char(label+96));
-end
-if ~ischar(label)
-    E.badinput('LABEL must be a string or a scalar number')
-end
+
 
 p = inputParser;
 p.addParameter('axis', gobjects(0));
+p.addParameter('capital', false);
 p.addParameter('xshift', 0.12);
 p.addParameter('yshift', 0);
 p.addParameter('fontweight', 'b');
@@ -47,11 +40,27 @@ p.parse(varargin{:});
 pout = p.Results;
 
 ax = pout.axis;
+use_capital = pout.capital;
 shift_percent_x = pout.xshift;
 shift_percent_y = pout.yshift;
 fontweight = pout.fontweight;
 fontcolor = pout.fontcolor;
 fontsize = pout.fontsize;
+
+if isnumeric(label) && isscalar(label)
+    if label > 26
+        warning('Numeric value of LABEL exceeds number of letters in alphabet');
+    end
+    if use_capital
+        offset = 64;
+    else
+        offset = 96;
+    end
+    label = sprintf('(%s)',char(label+offset));
+end
+if ~ischar(label)
+    E.badinput('LABEL must be a string or a scalar number')
+end
 
 if ~isempty(ax)
     if ~ishandle(ax) || ~strcmp(get(ax,'type'), 'axes')

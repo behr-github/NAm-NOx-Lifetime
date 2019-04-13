@@ -7,13 +7,13 @@ mydir = fileparts(mfilename('fullpath'));
 images_dir = fullfile(mydir, '..', 'Images');
 supp_dir = fullfile(images_dir, 'Supplement');
 
-theoretical_lifetime_plot();
-expected_vcds_plot();
-lifetime_groups_plot();
+%theoretical_lifetime_plot();
+%expected_vcds_plot();
+%lifetime_groups_plot();
 no2_hcho_ratio_plot();
-lifetime_ens_plot();
-weekend_weekday_diff();
-make_t_table();
+%lifetime_ens_plot();
+%weekend_weekday_diff();
+%make_t_table();
 
     function theoretical_lifetime_plot
         VOCr = [1, 5, 10];
@@ -187,10 +187,46 @@ make_t_table();
     end
 
     function no2_hcho_ratio_plot()
-        fig = misc_emissions_analysis.plot_no2_hcho_vcds_by_group('plot_mode', 'timeser-avg');
+        fig = figure;
+        subplot_stretch(2,1);
+        ax = subplot(2,1,1);
+        misc_emissions_analysis.plot_no2_hcho_vcds_by_group('plot_mode', 'timeser-avg', 'ax', ax);
+        leg = findobj(fig, 'type', 'legend');
+        leg.Location = 'northwest';
+        
+        cities{1} = cities_lifetime_groups.decr_lifetime;
+        cities{2} = cities_lifetime_groups.incr_lifetime;
+        cities{3} = cities_lifetime_groups.ccup_lifetime;
+        cities{4} = cities_lifetime_groups.ccdown_lifetime;
+        
+        colors = {'k','b',[0 0.5 0],'r'};
+        markers = {'o', 'd', 'v', '^'};
+        labels = {'Decreasing', 'Increasing', 'CCU', 'CCD'};
+        
+        common_opts = {'plot_quantity', 'VCDs', 'normalize', true, 'plot_averaging', 'Average',...
+            'always_restrict_to_moves', false, 'no_fig', true, 'exclude_bad_fits', false,...
+            'req_most', false, 'req_num_pts', false, 'incl_err', false};
+        
+        ax = subplot(2,1,2);
+        l = gobjects(numel(cities),1);
+        for i=1:numel(cities)
+            [~,x,y] = misc_emissions_analysis.plot_avg_lifetime_change(...
+                'locations', cities{i}, common_opts{:});
+            l(i) = line(ax, x,y,'color', colors{i}, 'markerfacecolor', colors{i},...
+                'marker', markers{i});
+        end
+        
+        legend(ax, l, labels);
+        ylabel(ax, 'Normalized NO_2 VCDs');
+        
+        label_subfigs(fig, 'xshift', 0.2, 'capital', true);
         if do_save
             save_the_fig(fig, 'no2-hcho-ratios', false);
         end
+    end
+
+    function vcd_trends_by_group()
+        
     end
 
     function weekend_weekday_diff()

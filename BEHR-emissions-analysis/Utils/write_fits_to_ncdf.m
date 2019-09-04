@@ -1,15 +1,33 @@
-function write_fits_to_ncdf(nc_dir)
+function write_fits_to_ncdf(nc_dir, fit_type)
 %UNTITLED Summary of this function goes here
 %   Detailed explanation goes here
 
+if nargin < 2
+    fit_type = 'behr';
+end
+
+switch lower(fit_type)
+    case 'behr'
+        fit_file_name = @misc_emissions_analysis.behr_fit_file_name;
+        dow = {'TWRF', 'US'};
+        suffix = '';
+    case 'wrf'
+        fit_file_name = @(win, dow) misc_emissions_analysis.wrf_fit_file_name(win, 'NO2_VCDS', dow);
+        dow = {'TWRF'};
+        suffix = '_wrf';
+    case 'nasa'
+        fit_file_name = @misc_emissions_analysis.nasa_fit_file_name;
+        dow = {'TWRF', 'US'};
+        suffix = '_nasa';
+end
+
 year_windows = arrayfun(@(y) (y-1):(y+1), 2006:2013, 'uniform', false);
-dow = {'TWRF', 'US'};
 for i_yr = 1:numel(year_windows)
     win = year_windows{i_yr};
     for i_dow = 1:numel(dow)
-        fit_file = misc_emissions_analysis.behr_fit_file_name(win, dow{i_dow});
+        fit_file = fit_file_name(win, dow{i_dow});
         fit = load(fit_file);
-        nc_file_name = sprintf(fullfile(nc_dir, 'EMG_fits_%d-%d_%s.nc'), win(1), win(end), dow{i_dow});
+        nc_file_name = sprintf(fullfile(nc_dir, 'EMG_fits_%d-%d_%s%s.nc'), win(1), win(end), dow{i_dow}, suffix);
         delete(nc_file_name);
         write_one_fit(fit.locs, nc_file_name);
     end

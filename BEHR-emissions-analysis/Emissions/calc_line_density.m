@@ -117,6 +117,9 @@ function [ no2_x, no2_linedens, no2_lindens_std, lon, lat, no2_mean, no2_std, nu
 %
 %       'grid_method' - see ROTATE_PLUME.
 %
+%       'sectors' - set to true to return line density data binned into one
+%       of 8 sectors, similar to Beirle et al.
+%
 %       'DEBUG_LEVEL' - level of output to console. Defaults to 1, 0 shuts
 %       off all output.
 %
@@ -138,6 +141,7 @@ p.addParameter('wind_dir_weights',[]);
 p.addParameter('wind_weights_bins',[]);
 p.addParameter('linedens_field', 'behr');
 p.addParameter('grid_method', 'cvm');
+p.addParameter('sectors', false);
 p.addParameter('DEBUG_LEVEL',1);
 
 p.parse(varargin{:});
@@ -152,6 +156,7 @@ wind_dir_weights = pout.wind_dir_weights;
 wind_weights_bins = pout.wind_weights_bins;
 linedens_field = pout.linedens_field;
 grid_method = pout.grid_method;
+do_sectors = pout.sectors;
 DEBUG_LEVEL = pout.DEBUG_LEVEL;
 
 if ~ischar(fpath)
@@ -211,7 +216,7 @@ elseif any(diff(wind_weights_bins(:)) < 0)
     E.badinput('''wind_weights_bins'' must be monotonically increasing');
 end
 
-if ischar(linedens_field) && ~strcmpi(linedens_field, 'behr')
+if ischar(linedens_field) && ~ismember(lower(linedens_field), {'behr','nasa'})
     % rotate_plume, if given 'behr' as grid_control will do the standard
     % rotation and gridding for BEHR VCDs. Otherwise it expects a cell
     % array of field names to grid.
@@ -219,8 +224,10 @@ if ischar(linedens_field) && ~strcmpi(linedens_field, 'behr')
     linedens_field = {linedens_field};
 elseif ~ischar(linedens_field)
     E.badinput('"linedens_field" must be a char array');
-else
+elseif strcmpi(linedens_field, 'behr')
     omi_field = 'BEHRColumnAmountNO2Trop';
+elseif strcmpi(linedens_field, 'nasa')
+    omi_field = 'ColumnAmountNO2Trop';
 end
 
 % Pixel reject structure for row anomaly, cloud fraction, etc.
@@ -241,6 +248,12 @@ end
 
 create_array = true;
 i = 0;
+if do_sectors
+    rot_or_sect = 'sectors';
+else
+    rot_or_sect = 'rotated';
+end
+fprintf('Beginning %s line density calculation\n', rot_or_sect);
 for d=1:numel(fnames_struct)
     this_file = fullfile(fpath,fnames_struct(d).name);
     % Some days are not produced in BEHR. Those days need to be skipped.
@@ -252,7 +265,7 @@ for d=1:numel(fnames_struct)
         continue
     end
     
-    if ~strcmpi(linedens_field, 'behr') && ~isfield(D.Data, linedens_field)
+    if ~ismember(lower(linedens_field), {'behr', 'nasa'}) && ~isfield(D.Data, linedens_field)
         E.callError('data_missing_field', 'File %s is missing the requested data field "%s"', this_file, linedens_field);
     end
 
@@ -304,8 +317,15 @@ for d=1:numel(fnames_struct)
         end
         
         if create_array
-            nox = nan(size(OMI.Longitude,1), size(OMI.Longitude,2), numel(fnames_struct)*n_swath);
-            aw = nan(size(OMI.Longitude,1), size(OMI.Longitude,2), numel(fnames_struct)*n_swath);
+            if do_sectors
+                directions = {'W','SW','S','SE','E','NE','N','NW'};
+                theta_bin_edges = [-180, -157.5, -112.5, -67.5, -22.5, 22.5, 67.5, 112.5, 157.5];
+                nox = make_empty_struct_from_cell(directions, nan(size(OMI.Longitude,1), size(OMI.Longitude,2), numel(fnames_struct)*n_swath));
+                aw = make_empty_struct_from_cell(directions, nan(size(OMI.Longitude,1), size(OMI.Longitude,2), numel(fnames_struct)*n_swath));
+            else
+                nox = nan(size(OMI.Longitude,1), size(OMI.Longitude,2), numel(fnames_struct)*n_swath);
+                aw = nan(size(OMI.Longitude,1), size(OMI.Longitude,2), numel(fnames_struct)*n_swath);
+            end
             lon = OMI.Longitude;
             lat = OMI.Latitude;
             debug_cell = cell(numel(fnames_struct)*n_swath,1);
@@ -317,6 +337,8 @@ for d=1:numel(fnames_struct)
             
         OMI.(omi_field)(~xx) = nan;
         OMI.Areaweight(~xx) = nan;
+        this_nox = OMI.(omi_field) * nox_no2_scale;
+        this_aw = OMI.Areaweight * get_wind_dir_weight(theta(d,s), wind_dir_weights, wind_weights_bins);
         % Multiply the weights by the wind direction weight, so that it
         % weights the NOx average and gets normalized out along with
         % the areaweight. The idea is that since I want to use slow
@@ -326,14 +348,54 @@ for d=1:numel(fnames_struct)
         % that the different wind directions contribute to the line
         % density in the same proportions as in the fast line
         % densities.
-        nox(:,:,i) = OMI.(omi_field) * nox_no2_scale;
-        aw(:,:,i) = OMI.Areaweight * get_wind_dir_weight(theta(d,s), wind_dir_weights, wind_weights_bins);
-        
+        if do_sectors
+            % Find which bin this belongs in
+            if theta(d,s) < theta_bin_edges(2) || theta(d,s) > theta_bin_edges(end)
+                bin = 'W';
+            else
+                theta_xx = theta_bin_edges(1:end-1) <= theta(d,s) & theta_bin_edges(2:end) > theta(d,s);
+                bin = directions{theta_xx};
+            end
+            nox.(bin)(:,:,i) = this_nox;
+            aw.(bin)(:,:,i) = this_aw;
+        else
+            nox(:,:,i) = this_nox;
+            aw(:,:,i) = this_aw;
+        end
     end
 end
 %fclose(fid);
 
-%no2_mean = nanmean(nox,3);
+if do_sectors
+    no2_x = struct();
+    no2_linedens = struct();
+    no2_lindens_std = struct();
+    no2_mean = struct();
+    no2_std = struct();
+    num_valid_obs = struct();
+    
+    for f=1:numel(directions)
+        thisd = directions{f};
+        [no2_x.(thisd), no2_linedens.(thisd), no2_lindens_std.(thisd), no2_mean.(thisd), no2_std.(thisd), num_valid_obs.(thisd)] ...
+            = integrate_line_densities(nox.(thisd), aw.(thisd), lon, lat, center_lon, center_lat, linedens_field);
+    end
+else
+    [no2_x, no2_linedens, no2_lindens_std, no2_mean, no2_std, num_valid_obs] = integrate_line_densities(nox, aw, lon, lat, center_lon, center_lat, linedens_field);
+end
+
+end
+
+
+function weight = get_wind_dir_weight(this_theta, wind_dir_weights, wind_dir_weight_bins)
+idx = find(this_theta > wind_dir_weight_bins, 1, 'last');
+if isempty(idx)
+    E = JLLErrors;
+    E.callError('undefined_wind_dir_weight', 'No wind direction weight defined for theta = %.1f', this_theta);
+end
+weight = wind_dir_weights(idx);
+end
+
+function [ no2_x, no2_linedens, no2_lindens_std, no2_mean, no2_std, num_valid_obs ] = integrate_line_densities(nox, aw, lon, lat, center_lon, center_lat, linedens_field)
 no2_mean = nansum2(nox .* aw, 3) ./ nansum2(aw, 3);
 num_valid_obs = sum( ~isnan(nox) & aw > 0, 3);
 % Calculate the weighted standard deviation (c.f.
@@ -375,19 +437,9 @@ no2_lindens_std = no2_lindens_std(rr);
 no2_lindens_std = sqrt(no2_lindens_std);
 
 % Convert line density from molec/cm to moles/km, if doing standard BEHR
-% line densities
-if strcmpi(linedens_field, 'behr')
+% or NASA line densities
+if ismember(lower(linedens_field), {'behr', 'nasa'})
     no2_linedens = no2_linedens * 1e5 / 6.022e23;
     no2_lindens_std = no2_lindens_std * 1e5 / 6.022e23;
 end
-end
-
-
-function weight = get_wind_dir_weight(this_theta, wind_dir_weights, wind_dir_weight_bins)
-idx = find(this_theta > wind_dir_weight_bins, 1, 'last');
-if isempty(idx)
-    E = JLLErrors;
-    E.callError('undefined_wind_dir_weight', 'No wind direction weight defined for theta = %.1f', this_theta);
-end
-weight = wind_dir_weights(idx);
 end

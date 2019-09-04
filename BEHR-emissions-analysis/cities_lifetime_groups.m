@@ -59,7 +59,7 @@ classdef cities_lifetime_groups
             weekdays.Boston = NaN;
             weekdays.Cheyenne = NaN;
             weekdays.Fresno = NaN;
-            weekdays.LasVega = NaN;
+            weekdays.LasVegas = NaN;
             weekdays.Miami = NaN;
             weekdays.Phoenix = NaN;
             weekdays.Portland = NaN;
@@ -236,6 +236,11 @@ classdef cities_lifetime_groups
             % weekday fits. Set INCLUDE_SHORT to true or omit to include
             % cities with < 60 points in their line densities.
             cities = {'Austin', 'Bakersfield', 'Baltimore', 'Boston', 'Cheyenne', 'Fresno', 'Las Vegas', 'Miami', 'Phoenix', 'Portland', 'Sacramento', 'San Antonio'};
+        end
+        
+        function cities = visually_marginal(include_short)
+            cities = {'Albuquerque', 'Cincinnati', 'Columbus', 'Dallas',...
+                'Detroit', 'Knoxville', 'Orlando', 'Philadelphia', 'San Francisco', 'Toronto'};
         end
     end
 end

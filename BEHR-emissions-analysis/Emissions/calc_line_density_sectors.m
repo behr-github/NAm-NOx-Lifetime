@@ -95,6 +95,8 @@ function [ no2_x, no2_linedens, no2_lindens_std, lon, lat, no2_mean, no2_std, nu
 %%%%% INPUT PARSING %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%
 
+error('calc_line_density_sectors:deprecated', 'This function is deprecated. Use the "sectors" parameter of calc_line_density instead');
+
 E = JLLErrors;
 
 p=inputParser;

@@ -123,12 +123,14 @@ classdef misc_emissions_analysis
         function filename = avg_file_name(year_in, days_of_week, varargin)
             p = advInputParser;
             p.addOptional('species', 'NO2');
+            p.addParameter('season', 'summer');
             p.parse(varargin{:});
             pout = p.Results;
             species = lower(pout.species);
+            season = capitalize_words(pout.season);
             
             years_str = strjoin(sprintfmulti('%d', year_in),'_');
-            filename = sprintf('Summer_avg_%s_%s_%s.mat', species, years_str, days_of_week);
+            filename = sprintf('%s_avg_%s_%s_%s.mat', season, species, years_str, days_of_week);
             filename = fullfile(misc_emissions_analysis.avg_save_dir, filename);
         end
         
@@ -146,7 +148,19 @@ classdef misc_emissions_analysis
             filename = fullfile(misc_emissions_analysis.site_info_dir, filename);
         end
         
-        function filename = line_density_file_name(start_date, end_date, by_sectors, wind_reject_filtered, wind_dir_weighted, use_wrf, winds_op, winds_cutoff, loc_inds, days_of_week, wrf_var)
+        function ind = nasa_wrf_int(use_wrf, use_nasa)
+            if use_wrf && use_nasa
+                error('use_wrf and use_nasa cannot both be true')
+            elseif use_wrf
+                ind = 1;
+            elseif use_nasa
+                ind = 2;
+            else
+                ind = 0;
+            end
+        end
+        
+        function filename = line_density_file_name(start_date, end_date, by_sectors, wind_reject_filtered, wind_dir_weighted, var_used, winds_op, winds_cutoff, loc_inds, days_of_week, wrf_var)
             if by_sectors
                 sectors_string = 'sectors';
             else
@@ -165,12 +179,14 @@ classdef misc_emissions_analysis
                 weighted_string = 'unweighted';
             end
             
-            if use_wrf
+            if var_used == 1
                 if exist('wrf_var', 'var') && ~isempty(wrf_var)
                     data_string = sprintf('WRF_%s', upper(wrf_var));
                 else
                     data_string = 'WRF';
                 end
+            elseif var_used == 2
+                data_string = 'NASA';
             else
                 data_string = 'BEHR';
             end
@@ -208,6 +224,17 @@ classdef misc_emissions_analysis
             filename = misc_emissions_analysis.fits_file_name(start_date, end_date, false, 1:71, days_of_week, 'lu');
         end
         
+        function filename = nasa_fit_file_name(time_period, days_of_week)
+            % NASA_FIT_FILE_NAME - returns the standard file for the NASA
+            % EMG fits for a time period (given as a numeric vector of
+            % years) and the days of week ('TWRF', 'US', or 'UMTWRFS').
+            % Wraps FITS_FILE_NAME and provides the default values for the
+            % remaining inputs.
+            start_date = datenum(min(time_period), 4, 1);
+            end_date = datenum(max(time_period), 9, 30);
+            filename = misc_emissions_analysis.fits_file_name(start_date, end_date, 2, 1:71, days_of_week, 'lu');
+        end
+        
         function filename = wrf_fit_file_name(time_period, wrf_var, varargin)
             if nargin < 3
                 dow = 'TWRF';
@@ -219,14 +246,15 @@ classdef misc_emissions_analysis
             filename = misc_emissions_analysis.fits_file_name(start_date, end_date, true, 1:71, dow, 'lu', wrf_var);
         end
         
-        function filename = fits_file_name(start_date, end_date, using_wrf, loc_inds, days_of_week, fit_type, wrf_var)
-            if using_wrf
+        function filename = fits_file_name(start_date, end_date, var_type, loc_inds, days_of_week, fit_type, wrf_var)
+            if var_type == 1
                 if ~exist('wrf_var', 'var')
                     product_string = 'WRF';
                 else
                     product_string = sprintf('WRF_%s', upper(wrf_var));
                 end
-                
+            elseif var_type == 2
+                product_string = 'NASA';
             else
                 product_string = 'BEHR';
             end
@@ -453,9 +481,11 @@ classdef misc_emissions_analysis
             % degrees
             p = advInputParser;
             p.addOptional('radius', []);
+            p.addParameter('inner_rad', 0);
             p.parse(varargin{:});
             pout = p.Results;
             user_radius = pout.radius;
+            inner_radius = pout.inner_rad;
             
             if isempty(user_radius)
                 radius = mean(loc.BoxSize(3:4));
@@ -463,7 +493,7 @@ classdef misc_emissions_analysis
                 radius = user_radius;
             end
             r = sqrt((lon - loc.Longitude).^2 + (lat - loc.Latitude).^2);
-            xx = r < radius;
+            xx = r >= inner_radius & r < radius;
         end
         
         function [wrf_files, F] = closest_wrf_file_in_time(date_in, F)
@@ -895,7 +925,7 @@ classdef misc_emissions_analysis
             % fit? Testing with the box model shows that with only 31
             % points, the fitting procedure has a hard time fitting more
             % than a narrow range of lifetimes, but does better with 61.
-            if (sum(~isnan(linedens)) < 60 || sum(~isnan(linedens)) > 70) && ~allow_any_num_pts
+            if (sum(~isnan(linedens)) < 46 || sum(~isnan(linedens)) > 70) && ~allow_any_num_pts
                 if DEBUG_LEVEL > 0
                     fprintf('Fit rejected by too few line density points\n');
                 end
@@ -982,21 +1012,31 @@ classdef misc_emissions_analysis
             E = JLLErrors;
             p = advInputParser;
             p.addParameter('species', 'no2');
+            p.addParameter('season', 'summer');
             p.addParameter('ignore_missing_files', false);
             p.parse(varargin{:});
             pout = p.Results;
             
             vcd_species = pout.species;
+            season = pout.season;
             ignore_missing_files = pout.ignore_missing_files;
             
-            allowed_species = {'no2','hcho'};
+            allowed_species = {'nasa_no2', 'no2','hcho'};
             if ~ismember(vcd_species, allowed_species)
                 E.badinput('"vcd_species" must be one of: %s', strjoin(allowed_species, ', '))
             end
             
+            if strcmpi(vcd_species, 'nasa_no2')
+                struct_field = 'no2';
+            else
+                struct_field = vcd_species;
+            end
+            
+            track_stddev = strcmpi(vcd_species, 'hcho');
+            
             init_done = false;
             for i_yr = 1:numel(years)
-                avg_filename = misc_emissions_analysis.avg_file_name(years(i_yr), days_of_week, vcd_species);
+                avg_filename = misc_emissions_analysis.avg_file_name(years(i_yr), days_of_week, vcd_species, 'season', season);
                 try
                     year_vcds = load(avg_filename);
                 catch err
@@ -1012,14 +1052,29 @@ classdef misc_emissions_analysis
                     lat = year_vcds.daily.lat;
                     DailyAvg = RunningAverage();
                     MonthlyAvg = RunningAverage();
+                    DailyStd = RunningAverage();
+                    MonthlyStd = RunningAverage();
                     
                     adding_monthly = ~isempty(year_vcds.monthly);
                     init_done = true;
                 end
-                DailyAvg.addData(year_vcds.daily.(vcd_species), year_vcds.daily.weights)
+                DailyAvg.addData(year_vcds.daily.(struct_field), year_vcds.daily.weights)
+                if track_stddev
+                    % in omhcho_time_average, the std. deviation is the
+                    % column uncertainty, added in quadrature, squared at
+                    % the end and divided by the sqrt of the weights, which
+                    % are RMS weighted. Undo that so that we're adding
+                    % the uncertainties in quadrature
+                    std_daily = (year_vcds.daily.stddev .* sqrt(year_vcds.daily.weights)).^2;
+                    DailyStd.addData(std_daily, year_vcds.daily.weights);
+                end
                 if adding_monthly
                     if ~isempty(year_vcds.monthly)
                         MonthlyAvg.addData(year_vcds.monthly.(vcd_species), year_vcds.monthly.weights)
+                        if track_stddev
+                            std_monthly = (year_vcds.monthly.stddev .* sqrt(year_vcds.monthly.weights)).^2;
+                            MonthlyStd.addData(std_monthly, year_vcds.monthly.weights);
+                        end
                     else
                         E.callError('missing_monthly_vcds', '%d average has no monthly VCDs, but previous years do', years(i_yr));
                     end
@@ -1036,6 +1091,49 @@ classdef misc_emissions_analysis
             vcds.lat = lat;
             vcds.daily_vcds = DailyAvg.getWeightedAverage();
             vcds.monthly_vcds = DailyAvg.getWeightedAverage();
+            vcds.daily_wts = DailyAvg.weights;
+            vcds.monthly_wts = MonthlyAvg.weights;
+            if track_stddev
+                vcds.daily_stddev = sqrt(DailyStd.getWeightedAverage()) ./ sqrt(DailyStd.weights);
+                vcds.monthly_stddev = sqrt(MonthlyStd.getWeightedAverage()) ./ sqrt(MonthlyStd.weights);
+            end
+        end
+        
+        function [x, ld_array] = load_line_density_array(varargin)
+            %LOAD_LINE_DENSITY_ARRAY Load all weekday line densities into one array
+            %   [X, LD_ARRAY] = LOAD_LINE_DENSITY_ARRAY() Load line densities for all
+            %   cities into LD_ARRAY, interpolating them to the x-coordinates, X.
+            %
+            %   [X, LD_ARRAY] = LOAD_LINE_DENSITY_ARRAY('days_of_week', DOW) specify
+            %   the days of week to load as 'TWRF' or 'US'.
+            
+            p = advInputParser;
+            p.addParameter('days_of_week', 'TWRF');
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            days_of_week = pout.days_of_week;
+            
+            x = -100:3:200;
+            years = 2006:2013;
+            last_city = 49;
+            ld_array = nan(last_city, numel(x), numel(years));
+            
+            for iyr = 1:numel(years)
+                yr = years(iyr);
+                yr_win = (yr-1):(yr+1);
+                fprintf('Loading %s\n', sprintf_ranges(yr_win));
+                fits = load(misc_emissions_analysis.behr_fit_file_name(yr_win, days_of_week));
+                
+                for iloc = 1:last_city
+                    if ~misc_emissions_analysis.is_fit_good_by_loc(fits.locs(iloc), 'any_num_pts', true, 'DEBUG_LEVEL', 0)
+                        continue
+                    end
+                    interp_ld = interp1(fits.locs(iloc).no2_sectors.x, fits.locs(iloc).no2_sectors.linedens, x);
+                    ld_array(iloc, :, iyr) = interp_ld;
+                end
+            end
+            
         end
         
         function moves = read_moves_data(varargin)
@@ -1115,7 +1213,9 @@ classdef misc_emissions_analysis
                 xx_window = xx_yr & ismember(moves_table_in{:,'emis_month'}, months_req) ...
                     & moves_table_in{:, 'species_id'} == species;
                 
-                moves{i_yr, 2} = nanmean(sum_to_year(moves_table_in(xx_window, :)));
+                nhours = (datenum(years_req(i_yr),10,1) - datenum(years_req(i_yr),4,1))*24;
+                conv = 1e-3 / nhours; % convert kg/summer to Mg/h
+                moves{i_yr, 2} = conv * nanmean(sum_to_year(moves_table_in(xx_window, :)));
             end
             
             
@@ -1220,18 +1320,22 @@ classdef misc_emissions_analysis
             counties = shaperead(misc_emissions_analysis.county_shape_file);
         end
         
-        function loc_avg_vcds = avg_vcds_around_loc(locs, time_period, days_of_week, varargin)
+        function [loc_avg_vcds, loc_std_vcds, loc_n_vcds] = avg_vcds_around_loc(locs, time_period, days_of_week, varargin)
             E = JLLErrors;
             p = advInputParser;
             p.addParameter('radius', 'by_loc');
+            p.addParameter('inner_rad', 0);
             p.addParameter('species', 'no2');
+            p.addParameter('season', 'summer');
             p.addParameter('ignore_missing_files', false);
             
             p.parse(varargin{:});
             pout = p.Results;
             
             avg_radius = pout.radius;
+            inner_radius = pout.inner_rad;
             vcd_species = pout.species;
+            season = pout.season;
             ignore_missing_files = pout.ignore_missing_files;
             
             if ischar(avg_radius)
@@ -1242,14 +1346,14 @@ classdef misc_emissions_analysis
                 end
             end
             
-            allowed_species = {'no2','hcho'};
+            allowed_species = {'no2','nasa_no2','hcho'};
             if ~ismember(vcd_species, allowed_species)
                 E.badinput('"vcd_species" must be one of: %s', strjoin(allowed_species, ', '))
             end
             
             [start_dates, end_dates] = misc_emissions_analysis.select_start_end_dates(time_period);
             time_period_years = unique(cellfun(@year, veccat(start_dates, end_dates)));
-            vcds = misc_emissions_analysis.load_vcds_for_years(time_period_years, days_of_week, 'species', vcd_species, 'ignore_missing_files', ignore_missing_files);
+            vcds = misc_emissions_analysis.load_vcds_for_years(time_period_years, days_of_week, 'species', vcd_species, 'season', season, 'ignore_missing_files', ignore_missing_files);
             lon = vcds.lon;
             lat = vcds.lat;
             lon_res = mean(diff(lon(1,:)));
@@ -1258,12 +1362,30 @@ classdef misc_emissions_analysis
                 E.notimplemented('Different lon and lat resolutions');
             end
             loc_avg_vcds = nan(size(locs));
+            loc_std_vcds = nan(size(locs));
+            loc_n_vcds = nan(size(locs));
+            loc_err_vcds = nan(size(locs));
             for i_loc = 1:numel(locs)
                 % This will use the box width (from center to edge
                 % perpendicular to the wind direction) as the radius and
                 % find all grid points with centers within that radius.
-                xx_radius = misc_emissions_analysis.find_indices_in_radius_around_loc(locs(i_loc), lon, lat, avg_radius);
+                xx_radius = misc_emissions_analysis.find_indices_in_radius_around_loc(locs(i_loc), lon, lat, avg_radius, 'inner_rad', inner_radius);
                 loc_avg_vcds(i_loc) = nanmean(vcds.daily_vcds(xx_radius));
+                loc_std_vcds(i_loc) = nanstd(vcds.daily_vcds(xx_radius));
+                loc_n_vcds(i_loc) = sum(xx_radius(:));
+                % Disabling for now, would need to add counts to the HCHO
+                % averages to do this properly. 
+%                 if strcmpi(vcd_species, 'hcho')
+%                     % mimics the calculation in omhcho_time_average, where
+%                     % the errors are added in quadrature, and then divided
+%                     % by the sqrt of the weights which are the number of
+%                     % obs. We get back to the undivided err, add it in
+%                     % quadrature, then redivide by the total number of obs
+%                     % in the final average.
+%                     err2 = (vcds.daily_stddev(xx_radius) .* sqrt(vcds.daily_wts)).^2;
+%                     wts = vcds.daily_wts;
+%                     loc_err_vcds(i_loc) = sqrt(nansum2(err2)) ./ sqrt(nansum2(wts));
+%                 end
             end
         end
         
@@ -1460,6 +1582,46 @@ classdef misc_emissions_analysis
             
         end
         
+        function good_fits = create_fit_filter_vecs(filter_fit_flag, years, any_num_pts)
+            if nargin < 3
+                any_num_pts = true;
+            end
+            
+            if filter_fit_flag == 0
+                good_fits = true(numel(years), 71);
+                return
+            else
+                good_fits = false(numel(years), 71);
+            end
+            for iyr = 1:numel(years)
+                yr = years(iyr);
+                yr_win = (yr-1):(yr+1);
+                fprintf('Loading fits for %s\n', sprintf_ranges(yr_win))
+                [sdate, edate] = misc_emissions_analysis.select_start_end_dates(yr_win);
+                fit_locs = load(misc_emissions_analysis.fits_file_name(sdate, edate, false, 1:71, 'TWRF', 'lu'));
+                these_good_fits = misc_emissions_analysis.is_fit_good_by_loc(fit_locs.locs, 'any_num_pts', any_num_pts, 'DEBUG_LEVEL', 0);
+                good_fits(iyr, :) = these_good_fits;
+            end
+            
+            if filter_fit_flag > 1
+                good_fits = sum(good_fits, 1) >= filter_fit_flag;
+                good_fits = repmat(good_fits, numel(years), 1);
+            end
+        end
+        
+        function locs = recalc_tau_uncertainty(locs, varargin)
+            p = advInputParser;
+            p.addParameter('percent_uncert', 10);
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            frac_uncert = pout.percent_uncert / 100;
+            
+            for iloc = 1:numel(locs)
+                locs(iloc).emis_tau.tau_uncert = locs(iloc).emis_tau.tau * frac_uncert;
+            end
+        end
+        
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % Interactive utility methods %
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1623,6 +1785,36 @@ classdef misc_emissions_analysis
         % Generation methods %
         %%%%%%%%%%%%%%%%%%%%%%
         function make_summer_averages(varargin)
+            function [start_date, end_date] = make_dates(avg_year)
+                start_date = cell(size(avg_year));
+                end_date = cell(size(avg_year));
+                for a=1:numel(avg_year)
+                    start_date{a} = datenum(avg_year(a), 4, 1);
+                    end_date{a} = datenum(avg_year(a), 9, 30);
+                end
+            end
+            
+            misc_emissions_analysis.make_vcd_averages(@make_dates, 'summer', varargin{:});
+        end
+        
+        function make_winter_averages(varargin)
+            function [start_date, end_date] = make_dates(avg_year)
+                start_date = cell(2, numel(avg_year));
+                end_date = cell(2, numel(avg_year));
+                for a=1:numel(avg_year)
+                    start_date{1,a} = datenum(avg_year(a), 1, 1);
+                    end_date{1,a} = datenum(avg_year(a), 3, 31);
+                    start_date{2,a} = datenum(avg_year(a), 10, 1);
+                    end_date{2,a} = datenum(avg_year(a), 12, 31);
+                end
+                start_date = start_date(:);
+                end_date = end_date(:);
+            end
+            
+            misc_emissions_analysis.make_vcd_averages(@make_dates, 'winter', varargin{:});
+        end
+        
+        function make_vcd_averages(date_fxn, season, varargin)
             % MAKE_SUMMER_AVERAGES Make summertime averages of NO2 or HCHO
             % VCDs.
             %
@@ -1649,20 +1841,18 @@ classdef misc_emissions_analysis
             end
             
             days_of_week = misc_emissions_analysis.choose_days_of_week(days_of_week);
-            species = opt_ask_multichoice('Which species to average?', {'NO2', 'HCHO'}, species, '"species"');
+            species = opt_ask_multichoice('Which species to average?', {'NO2', 'HCHO', 'NASA_NO2'}, species, '"species"');
             
-            start_date = cell(size(avg_year));
-            end_date = cell(size(avg_year));
-            for a=1:numel(avg_year)
-                start_date{a} = datenum(avg_year(a), 4, 1);
-                end_date{a} = datenum(avg_year(a), 9, 30);
-            end
+            [start_date, end_date] = date_fxn(avg_year);
             
             % Make the monthly profile product average, then try to make
             % the daily one. If there's no data, it will return a NaN
             common_opts = {'DEBUG_LEVEL', 1, 'dayofweek', days_of_week};
+            if strcmpi(species, 'nasa_no2')
+                common_opts = veccat(common_opts, {'avgfield', 'ColumnAmountNO2Trop'});
+            end
             switch lower(species)
-                case 'no2'
+                case {'no2','nasa_no2'}
                     %[monthly.no2, monthly.lon, monthly.lat, monthly.weights] = behr_time_average(start_date, end_date, 'prof_mode', 'monthly', common_opts{:});
                     monthly = [];
                     [daily.no2, daily.lon, daily.lat, daily.weights] = behr_time_average(start_date, end_date, 'prof_mode', 'daily', common_opts{:});
@@ -1671,7 +1861,7 @@ classdef misc_emissions_analysis
                     daily = monthly;
             end
             
-            save_name = misc_emissions_analysis.avg_file_name(avg_year, days_of_week, species);
+            save_name = misc_emissions_analysis.avg_file_name(avg_year, days_of_week, species, 'season', season);
             save(save_name, 'monthly', 'daily');
         end
         
@@ -2132,6 +2322,10 @@ classdef misc_emissions_analysis
             %   'winds_cutoff' - a scalar number indicating the wind speed
             %   criteria that goes with 'winds_op'.
             %
+            %   'use_nasa' - a scalar logical indicating whether to use
+            %   BEHR column densities (false) or NASA column densities
+            %   (true).
+            %
             %   'use_wrf' - a scalar logical indicating whether to use VCDs
             %   derived from WRF model simulation (using the
             %   preproc_AprioriVCDs utility in this repository). By
@@ -2173,6 +2367,7 @@ classdef misc_emissions_analysis
             p.addParameter('days_of_week', 'UMTWRFS');
             p.addParameter('winds_op', 'gt')
             p.addParameter('winds_cutoff', 3);
+            p.addParameter('use_nasa', false);
             p.addParameter('use_wrf', false);
             p.addParameter('wrf_var', '');
             p.addParameter('use_wind_rejects',true);
@@ -2191,6 +2386,7 @@ classdef misc_emissions_analysis
             days_of_week = pout.days_of_week;
             winds_op = pout.winds_op;
             winds_cutoff = pout.winds_cutoff;
+            use_nasa = pout.use_nasa;
             wrf_bool = pout.use_wrf;
             wrf_var = pout.wrf_var;
             use_wind_rejects = pout.use_wind_rejects;
@@ -2237,7 +2433,8 @@ classdef misc_emissions_analysis
             
             % If overwrite not given and the save file exists, ask to
             % overwrite. Otherwise, only overwrite if instructed.
-            save_name = misc_emissions_analysis.line_density_file_name(start_date, end_date, by_sectors, filter_by_wind_dir, weight_wind_dirs, wrf_bool, winds_op, winds_cutoff, loc_indicies, days_of_week, wrf_var);
+            type_indicator = misc_emissions_analysis.nasa_wrf_int(wrf_bool, use_nasa);
+            save_name = misc_emissions_analysis.line_density_file_name(start_date, end_date, by_sectors, filter_by_wind_dir, weight_wind_dirs, type_indicator, winds_op, winds_cutoff, loc_indicies, days_of_week, wrf_var);
             if exist(save_name, 'file')
                 if do_overwrite < 0
                     if ~ask_yn(sprintf('%s exists. Overwrite?', save_name))
@@ -2319,7 +2516,7 @@ classdef misc_emissions_analysis
             end
             
             parfor a=1:numel(winds.locs)
-                opt_args = {};
+                opt_args = {'sectors', by_sectors};
                 
                 box_size = winds_locs_distributed(a).BoxSize;
                 if any(isnan(box_size))
@@ -2336,6 +2533,8 @@ classdef misc_emissions_analysis
                     if ~isempty(wrf_var)
                         opt_args = veccat(opt_args, {'linedens_field', wrf_var});
                     end
+                elseif use_nasa
+                    opt_args = veccat(opt_args, {'linedens_field', 'nasa'});
                 end
                 
                 % "wind_reject_field" will have been set to 'none' if
@@ -2344,15 +2543,10 @@ classdef misc_emissions_analysis
                 % though.
                 wind_logical = misc_emissions_analysis.set_wind_conditions(winds_locs_distributed(a), winds_cutoff, winds_op, wind_reject_field);
 
-                if by_sectors
-                    fprintf('Calculating sector line densities for %s\n', winds_locs_distributed(a).ShortName);
-                    [no2(a).x, no2(a).linedens, no2(a).linedens_std, no2(a).lon, no2(a).lat, no2(a).no2_mean, no2(a).no2_std, no2(a).num_valid_obs, no2(a).nox, no2(a).debug_cell] ...
-                        = calc_line_density_sectors(behr_dir, behr_files, winds_locs_distributed(a).Longitude, winds_locs_distributed(a).Latitude, winds_locs_distributed(a).WindDir, wind_logical, 'rel_box_corners', box_size, opt_args{:});
-                else
-                    fprintf('Calculating rotated line densities for %s\n', winds_locs_distributed(a).ShortName);
-                    [no2(a).x, no2(a).linedens, no2(a).linedens_std, no2(a).lon, no2(a).lat, no2(a).no2_mean, no2(a).no2_std, no2(a).num_valid_obs, no2(a).nox, no2(a).debug_cell] ...
-                        = calc_line_density(behr_dir, behr_files, winds_locs_distributed(a).Longitude, winds_locs_distributed(a).Latitude, winds_locs_distributed(a).WindDir, wind_logical, 'rel_box_corners', box_size, 'days_of_week', days_of_week, opt_args{:});
-                end
+                fprintf('Calculating line densities for %s\n', winds_locs_distributed(a).ShortName);
+                [no2(a).x, no2(a).linedens, no2(a).linedens_std, no2(a).lon, no2(a).lat, no2(a).no2_mean, no2(a).no2_std, no2(a).num_valid_obs, no2(a).nox, no2(a).debug_cell] ...
+                    = calc_line_density(behr_dir, behr_files, winds_locs_distributed(a).Longitude, winds_locs_distributed(a).Latitude, winds_locs_distributed(a).WindDir, wind_logical,...
+                    'rel_box_corners', box_size, 'days_of_week', days_of_week, opt_args{:});
             end
             
             for a=1:numel(winds.locs)
@@ -2362,8 +2556,15 @@ classdef misc_emissions_analysis
             locs = winds.locs;
             dvec = winds.dvec;
             write_date = datestr(now);
+            if wrf_bool
+                ld_variable = wrf_var;
+            elseif use_nasa
+                ld_variable = 'ColumnAmountNO2Trop';
+            else
+                ld_variable = 'BEHRColumnAmountNO2Trop';
+            end
             
-            save(save_name, '-v7.3', 'locs', 'dvec', 'write_date');
+            save(save_name, '-v7.3', 'locs', 'dvec', 'write_date', 'ld_variable');
         end
         
         function locs = make_emg_fits(varargin)
@@ -2426,6 +2627,7 @@ classdef misc_emissions_analysis
             p.addParameter('add_nei', true);
             p.addParameter('days_of_week', 'UMTWRFS');
             p.addParameter('wrf_var', '');
+            p.addParameter('use_nasa', false);
             p.addParameter('do_overwrite', -1);
             % by default if it doesn't get it the second time, then it's
             % probably just going to randomly sample until it happens to
@@ -2446,6 +2648,7 @@ classdef misc_emissions_analysis
             add_nei = pout.add_nei;
             days_of_week = pout.days_of_week;
             wrf_var = pout.wrf_var;
+            use_nasa = pout.use_nasa;
             do_overwrite = pout.do_overwrite;
             max_fit_attempts = pout.max_fit_attempts;
             fatal_if_cannot_fit = pout.fatal_fit_fail;
@@ -2478,11 +2681,12 @@ classdef misc_emissions_analysis
             
             fit_type_in = misc_emissions_analysis.get_fit_type_interactive(fit_type_in);
             wrf_bool = ~isempty(wrf_var);
+            type_indicator = misc_emissions_analysis.nasa_wrf_int(wrf_bool, use_nasa);
             
             [start_date, end_date] = misc_emissions_analysis.select_start_end_dates(time_period);
             % If overwrite not given and the save file exists, ask to
             % overwrite. Otherwise, only overwrite if instructed.
-            save_name = misc_emissions_analysis.fits_file_name(start_date, end_date, wrf_bool, loc_indicies, days_of_week, fit_type_in, wrf_var);
+            save_name = misc_emissions_analysis.fits_file_name(start_date, end_date, type_indicator, loc_indicies, days_of_week, fit_type_in, wrf_var);
             if exist(save_name, 'file')
                 if do_overwrite < 0
                     if ~ask_yn(sprintf('%s exists. Overwrite?', save_name))
@@ -2508,7 +2712,7 @@ classdef misc_emissions_analysis
                 % However for the slow line densities we do want them
                 % weighted for wind direction contribution so that they
                 % match the fast line densities.
-                slow_ldens_file = misc_emissions_analysis.line_density_file_name(start_date, end_date, false, filtered_bool, true, wrf_bool, 'lt', misc_emissions_analysis.fast_slow_sep, file_loc_indicies, days_of_week, wrf_var);
+                slow_ldens_file = misc_emissions_analysis.line_density_file_name(start_date, end_date, false, filtered_bool, true, type_indicator, 'lt', misc_emissions_analysis.fast_slow_sep, file_loc_indicies, days_of_week, wrf_var);
                 if ~exist(slow_ldens_file, 'file')
                     [~,ldens_basename] = fileparts(slow_ldens_file);
                     % Use regular error function to have more control over the
@@ -2525,7 +2729,7 @@ classdef misc_emissions_analysis
                 weighted_bool = false;
                 slow_line_densities = [];
             end
-            ldens_file = misc_emissions_analysis.line_density_file_name(start_date, end_date, false, filtered_bool, weighted_bool, wrf_bool, 'gt', misc_emissions_analysis.fast_slow_sep, file_loc_indicies, days_of_week, wrf_var);
+            ldens_file = misc_emissions_analysis.line_density_file_name(start_date, end_date, false, filtered_bool, weighted_bool, type_indicator, 'gt', misc_emissions_analysis.fast_slow_sep, file_loc_indicies, days_of_week, wrf_var);
             if ~exist(ldens_file, 'file')
                 [~,ldens_basename] = fileparts(ldens_file);
                 % Use regular error function to have more control over the
@@ -3173,7 +3377,7 @@ classdef misc_emissions_analysis
             if isempty(ax)
                 figure;
                 ax = axes();
-            elseif ~ax
+            elseif ~isgraphics(ax)
                 do_plot = false;
             end
             
@@ -3695,6 +3899,7 @@ classdef misc_emissions_analysis
             %       weekend and weekday lifetime
             %       * 'Emissions': plot emissions derived from the fits
             %       * 'VCDs': plot trends in NO2 VCDs
+            %       * 'Winter VCDs': plot trends in winter BEHR NO2 VCDs
             %       * 'Weekend/weekday VCDs': plot ratio of weekend and
             %       weekday NO2 VCDs
             %       * 'Weekend - weekday VCDs': plot difference of weekend
@@ -3723,6 +3928,10 @@ classdef misc_emissions_analysis
             %   'req_most' - set to true to limit the locations plotted to
             %   those with at most one bad fit.
             %
+            %   'min_fits_req' - minimum number of good fits required for a
+            %   city to be included. Default is 1. Overridden by 'req_most'
+            %   when that is true.
+            %
             %   'req_num_pts' - set to true to require >= 60 points in the
             %   line density.
             %
@@ -3744,9 +3953,13 @@ classdef misc_emissions_analysis
             p.addParameter('allow_missing_vcds', false);
             p.addParameter('exclude_bad_fits', true);
             p.addParameter('req_most', nan);
+            p.addParameter('min_fits_req', 1);
             p.addParameter('req_num_pts', nan);
             p.addParameter('incl_err', nan);
+            p.addParameter('use_nasa_vcds', false);
+            p.addParameter('recalc_err', false);
             p.addParameter('ax',[]);
+            p.addParameter('exclude',[]);
             p.parse(varargin{:});
             pout = p.Results;
             
@@ -3754,6 +3967,9 @@ classdef misc_emissions_analysis
             do_plot_fig = ~pout.no_fig;
             allow_missing_vcds = pout.allow_missing_vcds;
             exclude_bad_fits = pout.exclude_bad_fits;
+            use_nasa_vcds = pout.use_nasa_vcds;
+            recalc_err = pout.recalc_err;
+            exclude_inds = misc_emissions_analysis.convert_input_loc_inds(pout.exclude);
             ax = pout.ax;
             
             % options for the quantity to plot
@@ -3764,6 +3980,7 @@ classdef misc_emissions_analysis
             pqopts.emissions = 'Emissions';
             pqopts.moves = 'MOVES';
             pqopts.vcds = 'VCDs';
+            pqopts.winter_vcds = 'Winter VCDs';
             pqopts.wkend_wkday_vcds_ratio = 'Weekend/weekday VCDs';
             pqopts.wkend_wkday_vcds_diff = 'Weekend - weekday VCDs';
             pqopts.expected_vcds = 'Expected VCDs';
@@ -3772,6 +3989,12 @@ classdef misc_emissions_analysis
             
             plot_quantity = opt_ask_multichoice('Which quantity to plot?', struct2cell(pqopts), pout.plot_quantity, '"plot_quantity"', 'list', true);
             do_normalize = opt_ask_yn('Normalize each location''s value to its average?', pout.normalize', '"normalize"');
+            
+            if do_normalize
+                ylabel_str = sprintf('Normalized %s', plot_quantity);
+            else
+                ylabel_str = plot_quantity;
+            end
             
             % options for the averaging
             avgopts.none = 'None';
@@ -3789,6 +4012,9 @@ classdef misc_emissions_analysis
             req_most_good_fits = opt_ask_yn('Only use cities with at most one bad fit?', pout.req_most, '"req_most"');
             req_num_pts = opt_ask_yn('Require line densities to have the ideal number of points?', pout.req_num_pts, '"req_num_pts"');
             include_err = opt_ask_yn('Include uncertainty on the plot?', pout.incl_err, '"incl_err"');
+            
+            req_n_fits = pout.min_fits_req;
+            
             if window_width == 1
                 years = {2005 2006 2007 2008 2009 2012 2013 2014};
                 x_vals = cell2mat(years);
@@ -3819,6 +4045,7 @@ classdef misc_emissions_analysis
                 else
                     xx = misc_emissions_analysis.convert_input_loc_inds(location_inds_or_names);
                 end
+                xx = xx(~ismember(xx, exclude_inds));
                 week_locs = week_locs(xx);
                 weekend_locs = weekend_locs(xx);
                 
@@ -3855,7 +4082,7 @@ classdef misc_emissions_analysis
                         this_week_err = NaN;
                         this_weekend_val = NaN;
                         this_weekend_err = NaN;
-                    elseif any(strcmpi(plot_quantity, {pqopts.vcds, pqopts.wkend_wkday_vcds_ratio, pqopts.wkend_wkday_vcds_diff}))
+                    elseif any(strcmpi(plot_quantity, {pqopts.vcds, pqopts.winter_vcds, pqopts.wkend_wkday_vcds_ratio, pqopts.wkend_wkday_vcds_diff}))
                         this_week_val = week_vcds(i_loc, i_yr);
                         this_week_err = NaN;
                         this_weekend_val = weekend_vcds(i_loc, i_yr);
@@ -3904,13 +4131,14 @@ classdef misc_emissions_analysis
                 weekend_vcds(~good_weekend_fits,i_yr) = nan;
             end
             
+            n_good_fits = sum(~isnan(week_vals),2);
             if req_most_good_fits
-                good_for_trends = sum(~isnan(week_vals),2) >= size(week_vals,2) - 1;
+                good_for_trends = n_good_fits >= size(week_vals,2) - 1;
                 if remove_decreasing_cities
                     good_for_trends = good_for_trends & ~all(diff(week_vals, 1, 2) < 0, 2);
                 end
             else
-                good_for_trends = any(~isnan(week_vals),2);
+                good_for_trends = n_good_fits >= req_n_fits;
             end
 
             week_vals = week_vals(good_for_trends, :);
@@ -4011,9 +4239,21 @@ classdef misc_emissions_analysis
             end
             
             function vcds = load_vcds(locs, days_of_week)
+                if use_nasa_vcds
+                    vcd_specie = 'nasa_no2';
+                else
+                    vcd_specie = 'no2';
+                end
+                
+                if regcmpi(plot_quantity, pqopts.winter_vcds)
+                    season = 'winter';
+                else
+                    season = 'summer';
+                end
                 vcds = nan(numel(locs), n_years);
                 for i_yr_inner = 1:n_years
-                    vcds(:,i_yr_inner) = misc_emissions_analysis.avg_vcds_around_loc(locs, years{i_yr_inner}, days_of_week, 'ignore_missing_files', allow_missing_vcds);
+                    vcds(:,i_yr_inner) = misc_emissions_analysis.avg_vcds_around_loc(locs, years{i_yr_inner},...
+                        days_of_week, 'species', vcd_specie, 'season', season, 'ignore_missing_files', allow_missing_vcds);
                 end
             end
             
@@ -4120,10 +4360,14 @@ classdef misc_emissions_analysis
             end
             
             function [locs_wkday, locs_wkend] = load_behr_tau(this_year_window)
-                fits = load(misc_emissions_analysis.behr_fit_file_name(this_year_window, 'TWRF'));
-                locs_wkday = misc_emissions_analysis.append_new_spreadsheet_fields(fits.locs);
-                fits = load(misc_emissions_analysis.behr_fit_file_name(this_year_window, 'US'));
-                locs_wkend = misc_emissions_analysis.append_new_spreadsheet_fields(fits.locs);
+                [sdates, edates] = misc_emissions_analysis.select_start_end_dates(this_year_window);
+                oh_data = load(misc_emissions_analysis.oh_file_name(sdates, edates));
+                locs_wkday = misc_emissions_analysis.append_new_spreadsheet_fields(oh_data.locs_wkday);
+                locs_wkend = misc_emissions_analysis.append_new_spreadsheet_fields(oh_data.locs_wkend);
+                if recalc_err
+                    locs_wkday = misc_emissions_analysis.recalc_tau_uncertainty(locs_wkday);
+                    locs_wkend = misc_emissions_analysis.recalc_tau_uncertainty(locs_wkend);
+                end
             end
             
             function [locs_wkday, locs_wkend] = load_wrf_tau(this_year_window)
@@ -4133,10 +4377,15 @@ classdef misc_emissions_analysis
             end
         end
         
-        function fig = plot_no2_hcho_vcds_by_group(varargin)
+        function [fig, ratio, ratio_std, ratio_n] = plot_no2_hcho_vcds_by_group(varargin)
             % PLOT_NO2_HCHO_VCDS_BY_GROUP Plot ratio of HCHO to NO2 VCDs for
             % each of the four groups of cities (decreasing, increasing,
             % CCD and CCU).
+            %
+            % Returns the figure handle, and (if plot_mode is a timeseries
+            % one) the HCHO:NO2 ratios, standard deviations, and number of
+            % points as cell arrays (decreasing, increasing, ccup, and
+            % ccdown).
             %
             % Parameters:
             %   'radius' - radius (in degrees) to averaged VCDs from around
@@ -4149,16 +4398,26 @@ classdef misc_emissions_analysis
             %       * 'timeser' plots the HCHO/NO2 ratio as a time series.
             %       * 'scatter-avg', 'timeser-avg' same as above except
             %       uses the group average, rather than individual cities.
+            %
+            %   'filter_fit' - whether or not to remove cities if their
+            %   weekday lifetime fit is bad. 0 disables this, 1 only
+            %   removes it when the fit is bad. >=2 requires that a city
+            %   have that many good years to be kept, but if kept, is
+            %   kept for all years.
             
             p = advInputParser;
             p.addParameter('radius', 'by_loc');
+            p.addParameter('no2_type', 'behr');
             p.addParameter('plot_mode', 'timeser-avg'); % 'scatter', 'scatter-avg', 'timeser', or 'timeser-avg'
+            p.addParameter('filter_fit', 0);
             p.addParameter('ax', []);
             p.parse(varargin{:});
             pout = p.Results;
             
             plot_mode = pout.plot_mode;
+            no2_type = pout.no2_type;
             vcd_radius = pout.radius;
+            do_filter_fit = pout.filter_fit;
             ax = pout.ax;
             
             if isempty(ax)
@@ -4166,6 +4425,12 @@ classdef misc_emissions_analysis
                 ax = gca;
             else
                 fig = ax.Parent;
+            end
+            
+            if strcmpi(no2_type, 'nasa')
+                no2_specie = 'nasa_no2';
+            else
+                no2_specie = 'no2';
             end
             
             cities = cell(1,4);
@@ -4193,7 +4458,7 @@ classdef misc_emissions_analysis
                     error('No linestyle defined for plot mode == "%s"', plot_mode)
             end
             group_styles = struct('marker', {'o','d','v','^'}, 'color', colors, 'markerfacecolor', colors, 'linestyle', linestyle);
-            
+            group_jitter = [-0.15, -0.05, 0.05, 0.15];
             locs = misc_emissions_analysis.read_locs_file();
             locs = locs(misc_emissions_analysis.get_loc_inds_of_type('Cities'));
             years = 2006:2013;
@@ -4201,13 +4466,24 @@ classdef misc_emissions_analysis
             proto_arr = {nan(numel(years), numel(locs))};
             no2 = repmat(proto_arr, size(cities));
             hcho = repmat(proto_arr, size(cities));
+            names = cell(1,4);
+            
+            % If filtering on good fits, we need to go through and load
+            % them first to figure out which cities to keep. When not
+            % filtering, just pretend all fits are good for simplicity.
+            
+            good_fits = misc_emissions_analysis.create_fit_filter_vecs(do_filter_fit, years);
+            good_fits = good_fits(:, 1:numel(locs));
+           
             
             for iyr = 1:numel(years)
                 yr = years(iyr);
                 yr_win = (yr-1):(yr+1);
                 
-                no2_avgs = misc_emissions_analysis.avg_vcds_around_loc(locs,yr_win,'TWRF','species','no2','radius',vcd_radius);
+                no2_avgs = misc_emissions_analysis.avg_vcds_around_loc(locs,yr_win,'TWRF','species',no2_specie,'radius',vcd_radius);
                 hcho_avgs = misc_emissions_analysis.avg_vcds_around_loc(locs,yr_win,'TWRF','species','hcho','radius',vcd_radius);
+                no2_avgs(~good_fits(iyr, :)) = nan;
+                hcho_avgs(~good_fits(iyr, :)) = nan;
                 
                 for i_grp = 1:numel(cities)
                     loc_inds = misc_emissions_analysis.convert_input_loc_inds(cities{i_grp});
@@ -4217,13 +4493,18 @@ classdef misc_emissions_analysis
                     end
                     no2{i_grp}(iyr, :) = no2_avgs(loc_inds);
                     hcho{i_grp}(iyr, :) = hcho_avgs(loc_inds);
-                    
-                    
+                    names{i_grp} = {locs(loc_inds).ShortName};
                 end
             end
             
             
             lall = gobjects(numel(cities),1);
+            plot_err = false;
+            add_city_names = false;
+            
+            ratio = cell(size(no2));
+            ratio_std = cell(size(no2));
+            ratio_n = cell(size(no2));
             for i_grp = 1:numel(cities)
                 if regcmpi(plot_mode, '^scatter')
                     if regcmpi(plot_mode, 'avg$')
@@ -4235,20 +4516,263 @@ classdef misc_emissions_analysis
                     l = line(ax, no2{i_grp}, hcho{i_grp}, group_styles(i_grp));
                     lall(i_grp) = l(1);
                 elseif regcmpi(plot_mode, '^timeser')
-                    ratio = hcho{i_grp} ./ no2{i_grp};
+                    this_ration = hcho{i_grp} ./ no2{i_grp};
                     if regcmpi(plot_mode, 'avg$')
                         %ratio(ratio<0) = nan;
-                        ratio = nanmean(ratio, 2);
+                        ratio_n{i_grp} = sum(~isnan(this_ration), 2);
+                        ratio_std{i_grp} = nanstd(this_ration, [], 2);
+                        ratio{i_grp} = nanmean(this_ration, 2);
+                        plot_err = true;
+                        x = years + group_jitter(i_grp);
+                    else
+                        ratio_n = ones(size(this_ration));
+                        ratio_std = nan(size(this_ration));
+                        add_city_names = true;
+                        x = years;
                     end
-                    l = line(ax, years, ratio, group_styles(i_grp));
+                    l = line(ax, x, ratio{i_grp}, group_styles(i_grp));
+                    if plot_err
+                        scatter_errorbars(x, ratio{i_grp}, ratio_std{i_grp}, 'color', group_styles(i_grp).color, 'parent', ax)
+                    elseif add_city_names
+                        for i_city = 1:length(names{i_grp})
+                            city_x = i_grp + 2013*ones(size(names{i_grp}));
+                            city_y = ratio{i_grp}(end,:);
+                            text(city_x, city_y, names{i_grp}, 'color', group_styles(i_grp).color, 'parent', ax);
+                        end
+                    end
                     lall(i_grp) = l(1);
                 end
             end
             legend(lall, cities_names);
             xlabel(xlabel_str);
             ylabel(ylabel_str);
+            if add_city_names
+                set(gca, 'xlim', [2005 2020], 'xtick', 2006:2013)
+            end
+        end
+        
+        function plot_hcho_no2_ratio_sig(varargin)
+            args = update_params(varargin, 'plot_mode', 'timeser-avg');
+            [fig, ratios, ratio_stds, ratio_ns] = misc_emissions_analysis.plot_no2_hcho_vcds_by_group(args{:});
+            % each of the outputs should be a cell array with each cell
+            % being a group of cities and a column vector of values per 
+            % year.
+            ratios = cat(2, ratios{:});
+            ratio_stds = cat(2, ratio_stds{:});
+            ratio_ns = cat(2, ratio_ns{:});
+            names = {'Decr.', 'Incr', 'CCU', 'CCD'};
+            
+            n_groups = size(ratios, 2);
+            n_years = size(ratios, 1);
+            close(fig);
+            fig = figure;
+            
+            [yticks, xticks] = meshgrid(1:n_groups, 1:n_groups);
+            years = 2006:2013;
+            if numel(years) ~= n_years
+                error('Different number of years than expected');
+            end
+            
+            for iyr = 1:n_years
+                these_ratios = ratios(iyr, :);
+                these_stds = ratio_stds(iyr, :);
+                these_ns = ratio_ns(iyr, :);
+                
+                is_diff = false(n_groups, n_groups);
+                for i = 1:n_groups
+                    for j = (i+1):n_groups
+                        [~, ~, d] = two_sample_t_test_alt(these_ratios(i), these_stds(i), these_ns(i), these_ratios(j), these_stds(j), these_ns(j));
+                        is_diff(i,j) = d;
+                        is_diff(j,i) = d;
+                    end
+                end
+                
+                ax = subplot(2, 4, iyr);
+                line(xticks(is_diff), yticks(is_diff), 'marker', 'o', 'color', [0 0.5 0], 'linewidth', 2, 'linestyle', 'none');
+                line(xticks(~is_diff), yticks(~is_diff), 'marker', 'x', 'color', 'r', 'linewidth', 2, 'linestyle', 'none');
+                set(ax, 'xtick', 1:4, 'xticklabels', names, 'ytick', 1:4, 'yticklabels', names);
+                title(ax, sprintf('%d', years(iyr)));
+            end
+            
+            subplot_stretch(2,4);
+        end
+        
+        function plot_vcd_trends_by_radius(varargin)
+            %UNTITLED Summary of this function goes here
+            %   Detailed explanation goes here
+            
+            p = advInputParser;
+            p.addParameter('filter_flag', 0, @(x) x >= 0);
+            p.addParameter('specie', 'no2');
+            p.addParameter('days_of_week', 'TWRF', @(x) ismember(x, 'TWRF', 'US'));
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            filter_flag = pout.filter_flag;
+            days_of_week = pout.days_of_week;
+            vcd_specie = pout.specie;
+            
+            years = 2006:2013;
+            radii = [0, 25, 50, 75, 100]/111;  % roughly convert kilometers into degrees.
+            midpoints = 0.5 * (radii(1:end-1) + radii(2:end));
+            n_rad = numel(radii) - 1;
+            good_fits = misc_emissions_analysis.create_fit_filter_vecs(filter_flag, years);
+            
+            locs = misc_emissions_analysis.read_locs_file();
+            loc_inds = 1:49;%misc_emissions_analysis.loc_types_to_inds('Cities');
+            locs = locs(loc_inds);
+            good_fits = good_fits(:, loc_inds);
+            
+            vcds = nan([size(good_fits), n_rad]);
+            
+            for iyr = 1:numel(years)
+                for irad = 1:n_rad
+                    yr_win = (years(iyr)-1):(years(iyr)+1);
+                    inner = radii(irad);
+                    outer = radii(irad+1);
+                    these_vcds = misc_emissions_analysis.avg_vcds_around_loc(locs, yr_win, days_of_week,...
+                        'species', vcd_specie, 'radius', outer, 'inner_rad', inner);
+                    these_vcds(~good_fits(iyr, :)) = nan;
+                    vcds(iyr, :, irad) = these_vcds;
+                end
+            end
+            
+            % For each group of cities, get the average by year and radius, then plot
+            % VCD vs. distance, colored by time.
+            cities = cell(1,4);
+            cities_names = {'Decreasing', 'Increasing', 'CCU', 'CCD'};
+            cities{1} = cities_lifetime_groups.decr_lifetime;
+            cities{2} = cities_lifetime_groups.incr_lifetime;
+            cities{3} = cities_lifetime_groups.ccup_lifetime;
+            cities{4} = cities_lifetime_groups.ccdown_lifetime;
+            
+            fig = figure;
+            
+            for i_grp = 1:numel(cities)
+                ax = subplot(2, 2, i_grp);
+                grp_inds = misc_emissions_analysis.convert_input_loc_inds(cities{i_grp});
+                grp_vcds = squeeze(nanmean(vcds(:, grp_inds, :), 2));
+                for iyr = 1:numel(years)
+                    color = map2colmap(iyr, 1, numel(years), 'jet');
+                    line(midpoints, grp_vcds(iyr, :), 'color', color, 'marker', 'o');
+                end
+                
+                colorbar;
+                caxis([min(years), max(years)]);
+                colormap('jet');
+                title(ax, cities_names{i_grp});
+            end
+            
+            subplot_stretch(2,2);
             
         end
+
+
+        function [figs] = plot_loc_vcd_diff_maps(varargin)
+            %UNTITLED Summary of this function goes here
+            %   Detailed explanation goes here
+            
+            p = advInputParser;
+            p.addParameter('key_years', [2006, 2010, 2013]);
+            p.addParameter('days_of_week', 'TWRF');
+            p.addParameter('loc_inds', 1:49);
+            p.addParameter('season', 'summer');
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            key_years = pout.key_years;
+            loc_inds =  misc_emissions_analysis.convert_input_loc_inds(pout.loc_inds);
+            days_of_week = pout.days_of_week;
+            season = pout.season;
+            
+            % Load the VCDs for each of the three year periods
+            nlocs = numel(loc_inds);
+            nyears = numel(key_years);
+            vcds = cell(size(key_years));
+            
+            for iyr = 1:nyears
+                yr = key_years(iyr);
+                yr_win = (yr-1):(yr+1);
+                vcd_struct = misc_emissions_analysis.load_vcds_for_years(yr_win, days_of_week, 'season', season);
+                
+                % lon and lat should be the same for all years
+                lon = vcd_struct.lon;
+                lat = vcd_struct.lat;
+                vcds{iyr} = vcd_struct.daily_vcds;
+            end
+            
+            locs = misc_emissions_analysis.read_locs_file();
+            locs = locs(loc_inds);
+            
+            figs = gobjects(nlocs,1);
+            for iloc = 1:nlocs
+                figs(iloc) = figure;
+                this_loc = locs(iloc);
+                
+                % assuming the grid cells are all 0.05 deg, this will get the right
+                % radius in # of boxes
+                radius = nanmean(this_loc.BoxSize(3:4))/0.05;
+                [xx,yy] = misc_emissions_analysis.find_indicies_in_box_around_point(this_loc, lon, lat, radius);
+                
+                abs_axes = cell(nyears,1);
+                diff_axes = cell(nyears-1,1);
+                max_vcd = 0;
+                max_diff = 0;
+                
+                for iyr = 1:nyears
+                    yr = key_years(iyr);
+                    yr_win = (yr-1):(yr+1);
+                    ax = subplot(2, nyears, iyr);
+                    abs_axes{iyr} = ax;
+                    these_vcds = vcds{iyr}(xx,yy);
+                    pcolor(ax, lon(xx, yy), lat(xx,yy), these_vcds);
+                    shading flat
+                    colorbar
+                    if nanmax(these_vcds(:)) > max_vcd
+                        max_vcd = nanmax(these_vcds(:));
+                    end
+                    
+                    title(ax, sprintf('%s: %s', this_loc.Location, sprintf_ranges(yr_win)));
+                    
+                    if iyr > 1
+                        ax = subplot(2, nyears, iyr+nyears);
+                        diff_axes{iyr-1} = ax;
+                        these_diffs = vcds{iyr}(xx,yy) - vcds{iyr-1}(xx,yy);
+                        pcolor(ax, lon(xx, yy), lat(xx, yy), these_diffs);
+                        shading flat
+                        colormap(ax, blue_red_cmap);
+                        colorbar
+                        this_max = nanmax(abs(these_diffs(:)));
+                        if this_max > max_diff
+                            max_diff = this_max;
+                        end
+                        title(ax, sprintf('%d* vs. %d*', key_years(iyr), key_years(iyr-1)));
+                        
+                    else
+                        
+                    end
+                end
+                
+                max_vcd = ceil(max_vcd/5e14)*5e14;
+                max_diff = ceil(max_diff/5e14)*5e14;
+                
+                for iax = 1:numel(abs_axes)
+                    caxis(abs_axes{iax}, [0, max_vcd]);
+                end
+                
+                for iax = 1:numel(diff_axes)
+                    caxis(diff_axes{iax}, [-max_diff, max_diff]);
+                end
+                
+                subplot_stretch(2, nyears, 'figh', figs(iloc));
+            end
+            
+        end
+
+
+        
 
         function make_t_score_table(csv_file, dow)
             years = 2006:2013;
@@ -4331,7 +4855,7 @@ classdef misc_emissions_analysis
             end
         end
         
-        function plot_lifetime_with_sig(varargin)
+        function figs = plot_lifetime_with_sig(varargin)
             % PLOT_LIFETIME_WITH_SIG Plot weekday and weekend lifetimes for
             % locations along with grids showing which lifetimes are
             % significantly different from one another.
@@ -4345,6 +4869,7 @@ classdef misc_emissions_analysis
             p.addParameter('loc_inds', 1:71);
             p.addParameter('product', 'behr');
             p.addParameter('hide_bad_fits', false);
+            p.addParameter('recalc_err', false);
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -4352,9 +4877,12 @@ classdef misc_emissions_analysis
             loc_inds = misc_emissions_analysis.convert_input_loc_inds(pout.loc_inds);
             hide_bad_fits = pout.hide_bad_fits;
             data_product = pout.product;
+            recalc_err = pout.recalc_err;
             
             if strcmpi(data_product, 'behr')
                 name_fxn = @(yrs, dow) misc_emissions_analysis.behr_fit_file_name(yrs, dow);
+            elseif strcmpi(data_product, 'nasa')
+                name_fxn = @(yrs, dow) misc_emissions_analysis.nasa_fit_file_name(yrs, dow);
             elseif strcmpi(data_product, 'wrf')
                 name_fxn = @(yrs, dow) misc_emissions_analysis.wrf_fit_file_name(yrs, 'no2_vcds', 'TWRF');
             else
@@ -4382,6 +4910,11 @@ classdef misc_emissions_analysis
                 wkdays.locs = misc_emissions_analysis.cutdown_locs_by_index(wkdays.locs, loc_inds);
                 wkends = load(name_fxn(yr_win, 'US'));
                 wkends.locs = misc_emissions_analysis.cutdown_locs_by_index(wkends.locs, loc_inds);
+                
+                if recalc_err
+                    wkdays.locs = misc_emissions_analysis.recalc_tau_uncertainty(wkdays.locs);
+                    wkends.locs = misc_emissions_analysis.recalc_tau_uncertainty(wkends.locs);
+                end
                 
                 for i_loc = 1:n_locs
                     taus(i_yr, i_loc, 1) = get_tau(wkdays.locs(i_loc).emis_tau.tau);
@@ -4528,6 +5061,59 @@ classdef misc_emissions_analysis
             end
             
         end
+        
+        function plot_box_city_group_vcds(varargin)
+            p = advInputParser;
+            p.addParameter('groups', {'decr', 'incr', 'ccu', 'ccd'});
+            p.addParameter('exclude', []);
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            groups = pout.groups;
+            
+            group_cities = struct('decr', {cities_lifetime_groups.decr_lifetime},...
+                'incr', {cities_lifetime_groups.incr_lifetime},...
+                'ccu', {cities_lifetime_groups.ccup_lifetime},...
+                'ccd', {cities_lifetime_groups.ccdown_lifetime});
+            group_colors = struct('decr', 'k', 'incr', 'b', 'ccu', [0 0.5 0], 'ccd', 'r');
+            group_labels = struct('decr', 'Decr.', 'incr', 'Incr.', 'ccu', 'CCU', 'ccd', 'CCD');
+            
+            exclude_inds = misc_emissions_analysis.convert_input_loc_inds(pout.exclude);
+            
+            ngrp = numel(groups);
+            l = gobjects(ngrp, 1);
+            width = 0.6 / ngrp;
+            offsets = linspace(-0.3, 0.3, ngrp);
+            labels = cell(1, ngrp);
+            
+            fig = figure;
+            ax = gca;
+            hold on
+            
+            for igr = 1:numel(groups)
+                thisg = groups{igr};
+                grp_inds = misc_emissions_analysis.convert_input_loc_inds(group_cities.(thisg));
+                grp_inds = grp_inds(~ismember(grp_inds, exclude_inds));
+                [~, years, vcds] = misc_emissions_analysis.plot_avg_lifetime_change('locations', grp_inds, ...
+                    'plot_quantity', 'VCDs', 'normalize', false, 'plot_averaging', 'None', ...
+                    'no_fig', true, 'req_most', false, 'min_fits_req', 3, 'req_num_pts', false,...
+                    'incl_err', false, 'always_restrict_to_moves', false);
+                %years = 2006:2013;
+                %vcds = 9e15*rand(10, length(years));
+                
+                col = group_colors.(thisg);
+                boxplot(ax, vcds, 'positions', years + offsets(igr), 'labels', years, 'widths', width, 'colors', col, 'symbol', '+');
+                l(igr) = line([nan, nan], [nan, nan], 'color', col, 'linewidth', 2);
+                labels{igr} = group_labels.(thisg);
+            end
+            
+            legend(l, labels);
+            ylabel('VCD (molec. cm^{-2})');
+            set(gca, 'xlim', [2005 2014], 'ylim', [0 1e16], 'xtick', years, 'fontsize', 14, 'xticklabelrotation', 30);
+            grid on
+        end
+
+
         
         function [figs, info] = plot_vcd_vs_concentration(varargin)
             % This plots the surface or boundary layer concentration
@@ -5233,7 +5819,149 @@ classdef misc_emissions_analysis
             end
         end
         
-        function plot_line_dens_fits_by_year(varargin)
+        function fig = plot_linedens_trends(varargin)
+            %PLOT_LINEDENS_TRENDS Plot trends in line densities of cities
+            %
+            %   Parameters:
+            %
+            %   'x' - the x coordinates of the line density.
+            %
+            %   'ld_array' - the line density array loaded by LOAD_LINE_DENSITY_ARRAY.
+            %   If not given then this and x are both loaded. If this is given, but x
+            %   is not, the standard x is assumed.
+            %
+            %   'loc_inds' - location indices or names. If not given, all cities are
+            %   plotted on one figure.
+            %
+            %   'normalize_to' - how to normalize the line densities. Options are:
+            %       * false - do not normalize
+            %       * 'mean-vec' - normalize by the vector of mean line densities, i.e.
+            %       each point in the line density gets normalized by its mean.
+            %       * 'mean' - normalize by the overall mean of the line densities,
+            %       i.e. all points are normalized by the same value.
+            %       * 'max-vec' - as 'mean-vec' but for the maximum
+            %       * 'max' - as 'mean' but for the maximum
+            %       * 'first' - normalize by the first year to have non-NaN line
+            %       densities. Behaves like 'mean-vec' and 'max-vec'.
+            %
+            %   'average_cities' - average across all cities selected by 'loc_inds'.
+            
+            p = advInputParser;
+            p.addParameter('x', -100:3:200);
+            p.addParameter('ld_array', nan);
+            p.addParameter('loc_inds', 1:49);
+            p.addParameter('normalize_to', false);
+            p.addParameter('average_cities', false);
+            
+            p.parse(varargin{:});
+            pout = p.Results;
+            
+            x = pout.x;
+            ld_array = pout.ld_array;
+            inds = misc_emissions_analysis.convert_input_loc_inds(pout.loc_inds);
+            normalize_to = pout.normalize_to;
+            do_average = pout.average_cities;
+            
+            if isscalar(ld_array)
+                [x, ld_array] = misc_emissions_analysis.load_line_density_array();
+            end
+            
+            ncities = numel(inds);
+            years = 2006:2013;
+            locs = misc_emissions_analysis.read_locs_file();
+            
+            if normalize_to
+                vec_sz = [1, 1, numel(years)];
+                point_sz = [1, numel(x), numel(years)];
+                switch lower(normalize_to)
+                    case 'mean-vec'
+                        yr_lds = nanmean(ld_array, 3);
+                        sz = vec_sz;
+                        ystr = 'Norm. to mean vec';
+                    case 'mean'
+                        yr_lds = reshape(ld_array, size(ld_array,1), []);
+                        yr_lds = nanmean(yr_lds, 2);
+                        sz = point_sz;
+                        ystr = 'Norm. to mean';
+                    case 'max-vec'
+                        yr_lds = nanmax(ld_array, [], 3);
+                        sz = vec_sz;
+                        ystr = 'Norm to max vec';
+                    case 'max'
+                        yr_lds = reshape(ld_array, size(ld_array,1), []);
+                        yr_lds = nanmax(yr_lds, [], 2);
+                        sz = point_sz;
+                        ystr = 'Norm to max';
+                    case 'first'
+                        % If we're averaging, we want all cities relative
+                        % to the same first year, otherwise that means
+                        % we'll be averaging quantities that are relative
+                        % to different years together. If we're not
+                        % averaging, then let's make it relative to the
+                        % first good year.
+                        yr_lds = extract_first(ld_array, do_average);
+                        sz = vec_sz;
+                        ystr = 'Norm to first year';
+                    otherwise
+                        error('%s is not a valid value for NORMALIZE_TO', normalize_to)
+                end
+                yr_lds = repmat(yr_lds, sz);
+                ld_array = ld_array ./ yr_lds;
+            else
+                ystr = 'mol/km';
+            end
+            
+            if do_average
+                ld_array = nanmean(ld_array(inds, :, :), 1);
+                ncities = 1;
+                inds = 1;
+            end
+            
+            
+            
+            fig = figure;
+            [height, width] = square_subplot_dims(ncities);
+            for icity = 1:numel(inds)
+                ax = subplot(height, width, icity);
+                subld = squeeze(ld_array(inds(icity), :, :));
+                for iyr = 1:size(subld,2)
+                    if iyr == normalize_to
+                        continue
+                    end
+                    col = map2colmap(iyr, 1, size(subld,2), 'jet');
+                    line(ax, x, subld(:, iyr), 'color', col);
+                end
+                colorbar;
+                colormap('jet');
+                caxis([years(1), years(end)]);
+                ylabel(sprintf('Line densities (%s)', ystr));
+                if ~do_average
+                    title(ax, locs(inds(icity)).Location);
+                end
+            end
+            
+            subplot_stretch(height, width, 'factor', 0.75);
+            
+            function first_lds = extract_first(lds, being_averaged)
+                if being_averaged
+                    first_lds = lds(:, :, 1);
+                    return
+                end
+                has_data = squeeze(any(~isnan(lds),2));
+                first_lds = nan(size(lds,1), size(lds,2));
+                for i = 1:size(has_data,1)
+                    ifirst = find(has_data(i,:),1,'first');
+                    if ~isempty(ifirst)
+                        first_lds(i,:) = lds(i,:,ifirst);
+                    end
+                end
+            end
+            
+        end
+
+
+        
+        function figs = plot_line_dens_fits_by_year(varargin)
             % PLOT_LINE_DENS_FITS_BY_YEAR Plots line densities and their
             % fits from all years on one plot.
             %
@@ -5274,6 +6002,7 @@ classdef misc_emissions_analysis
             p.addParameter('source', 'behr');
             p.addParameter('include_bad', false);
             p.addParameter('include_weekends', true);
+            p.addParameter('key_years_only', false);
             
             p.parse(varargin{:});
             pout = p.Results;
@@ -5290,11 +6019,12 @@ classdef misc_emissions_analysis
             data_source = pout.source;
             include_bad_fits = pout.include_bad;
             include_weekends = pout.include_weekends;
+            key_years_only = pout.key_years_only;
             
             if strcmpi(data_source, 'behr')
                 wrf_bool = false;
                 weekdays = 'TWRF';
-                n_subplots = 2;
+                n_subplots = 1 + include_weekends;
                 ld_scale = 1;
             elseif strcmpi(data_source, 'wrf')
                 wrf_bool = true;
@@ -5358,13 +6088,16 @@ classdef misc_emissions_analysis
                 figs(i_loc) = figure;
                 subplot_stretch(n_subplots,1);
                 ax1 = subplot(n_subplots,1,1);
-                plot_ld_fits(ax1, xcoords(i_loc, :, 1), line_densities(i_loc, :, 1), fits(i_loc, :, 1));
+                
+                key_years = cities_lifetime_groups.get_key_years(locs(i_loc).ShortName, 'TWRF', 'no_nans');
+                plot_ld_fits(ax1, xcoords(i_loc, :, 1), line_densities(i_loc, :, 1), fits(i_loc, :, 1), key_years);
                 set_axis_labels(ax1);
                 title(ax1, sprintf('%s, weekdays', locs(i_loc).ShortName));
                 
                 if include_weekends
                     ax2 = subplot(n_subplots,1,2);
-                    plot_ld_fits(ax2, xcoords(i_loc, :, 2), line_densities(i_loc, :, 2), fits(i_loc, :, 2));
+                    key_years = cities_lifetime_groups.get_key_years(locs(i_loc).ShortName, 'US', 'no_nans');
+                    plot_ld_fits(ax2, xcoords(i_loc, :, 2), line_densities(i_loc, :, 2), fits(i_loc, :, 2), key_years);
                     set_axis_labels(ax2);
                     title(ax2, 'weekends');
                 end
@@ -5446,10 +6179,14 @@ classdef misc_emissions_analysis
                 xlabel(ax, sprintf('%s (km)', x_normstr));
             end
             
-            function plot_ld_fits(ax, x, lds, fits)
+            function plot_ld_fits(ax, x, lds, fits, key_yrs)
                 h_ld = gobjects(n_yrs,1);
                 h_fit = gobjects(n_yrs,1);
                 for i=1:numel(x)
+                    if key_years_only && ~ismember(years(i), key_yrs)
+                        continue
+                    end
+                    
                     if plot_line_dens
                         h_ld(i) = line(ax, x{i}, lds{i}, 'marker', 'o', 'linestyle', 'none');
                     end
@@ -5458,15 +6195,24 @@ classdef misc_emissions_analysis
                     end
                 end
                 
+                if key_years_only
+                    xx_yrs = ismember(years, key_yrs);
+                    h_ld = h_ld(xx_yrs);
+                    h_fit = h_fit(xx_yrs);
+                    line_years = key_yrs;
+                else
+                    line_years = years;
+                end
+                
                 % If only plotting fit or only plotting line densities, just plot
                 % them and use those series in the legend. If plotting both, use
                 % the fits in the legend for colors and add dummy entries to
                 % differentiate fit and line density
                 h = [];
-                leg_strs = arrayfun(@(x) sprintf_ranges((x-1):(x+1)), years', 'uniform', false);
+                leg_strs = arrayfun(@(x) sprintf_ranges((x-1):(x+1)), line_years', 'uniform', false);
                 if plot_fit
                     h = h_fit;
-                    misc_emissions_analysis.set_year_series_plot_colors(h_fit, 'k');
+                    misc_emissions_analysis.set_year_series_plot_colors(h_fit, 'k', line_years);
                     if plot_line_dens
                         h(end+1) = line(ax, nan,nan,'linewidth',2,'color','k');
                         leg_strs{end+1} = 'Fits';
@@ -5479,7 +6225,7 @@ classdef misc_emissions_analysis
                         h(end+1) = line(ax, nan,nan,'marker','o','color','k','markerfacecolor','k','linestyle','none');
                         leg_strs{end+1} = 'Line densities';
                     end
-                    misc_emissions_analysis.set_year_series_plot_colors(h_ld, 'k');
+                    misc_emissions_analysis.set_year_series_plot_colors(h_ld, 'k', line_years);
                 end
                 
                 legend(ax, h, leg_strs);
@@ -5738,13 +6484,23 @@ classdef misc_emissions_analysis
         % Plot helpers %
         %%%%%%%%%%%%%%%%
         
-        function set_year_series_plot_colors(lineh, edge_color)
+        function set_year_series_plot_colors(lineh, edge_color, line_years)
+            n_lines = numel(lineh);
+            
             if nargin < 2
                 edge_color = '';
             end
-            n_lines = numel(lineh);
+            if nargin < 3
+                line_years = 1:n_lines;
+                min_yr = 1;
+                max_yr = n_lines;
+            else
+                min_yr = 2006;
+                max_yr = 2013;
+            end
+            
             for i=1:n_lines
-                this_color = map2colmap(i, n_lines, 'jet');
+                this_color = map2colmap(line_years(i), min_yr, max_yr, 'jet');
                 lineh(i).Color = this_color;
                 lineh(i).MarkerFaceColor = this_color;
                 if ~isempty(edge_color)

@@ -239,7 +239,7 @@ elseif strcmpi(grid_method, 'interp')
 end
 
     function OMI = grid_by_cvm(Data, BoxGrid)
-        if strcmpi(grid_control, 'behr')
+        if ismember(lower(grid_control), {'behr', 'nasa'})
             OMI = psm_wrapper(Data, BoxGrid, 'only_cvm', true, 'DEBUG_LEVEL', DEBUG_LEVEL);
         elseif iscellstr(grid_control)
             for i_fn = 1:numel(grid_control)

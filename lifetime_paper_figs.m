@@ -1,19 +1,20 @@
 function lifetime_paper_figs
 
-do_save = true;
+do_save = false;
 do_close = false;
 
 mydir = fileparts(mfilename('fullpath'));
-images_dir = fullfile(mydir, '..', 'Images');
+images_dir = fullfile(mydir, '..', '..', 'Science', 'Response', 'Images');
 supp_dir = fullfile(images_dir, 'Supplement');
 
-%theoretical_lifetime_plot();
-%expected_vcds_plot();
-%lifetime_groups_plot();
-no2_hcho_ratio_plot();
-%lifetime_ens_plot();
-%weekend_weekday_diff();
-%make_t_table();
+theoretical_lifetime_plot();
+ld_example_plot();
+lifetime_groups_plot();
+no2_vcd_boxplot();
+expected_vcds_plot();
+lifetime_ens_plot();
+weekend_weekday_diff();
+make_t_table();
 
     function theoretical_lifetime_plot
         VOCr = [1, 5, 10];
@@ -80,6 +81,26 @@ no2_hcho_ratio_plot();
         end
     end
 
+    function ld_example_plot()
+        loc_names = {'Minneapolis', 'Reno', 'St Louis', 'Washington DC'};
+        order = [1, 2, 4, 3];
+        figs = misc_emissions_analysis.plot_line_dens_fits_by_year('loc_inds', loc_names, 'include_weekends', false,...
+            'key_years_only', true, 'ynorm', 'squeeze', 'xnorm', 'fitmax');
+        combo_fig = combine_plots(figs(order), 'dims', [2 2], 'scale', 1);
+        %close(figs)
+        label_subfigs(combo_fig, 'capital', true);
+        if do_save
+            save_the_fig(combo_fig, 'line-dens-examples', false);
+        end
+    end
+
+    function no2_vcd_boxplot()
+        fig = misc_emissions_analysis.plot_box_city_group_vcds();
+        if do_save
+            save_the_fig(fig, 'no2-vcds-boxplots-all', false);
+        end
+    end
+
     function lifetime_groups_plot()
         fig = figure;
         subplot_stretch(4,1.3);
@@ -91,8 +112,9 @@ no2_hcho_ratio_plot();
         cities = {decr_cities, incr_cities, ccu_cities, ccd_cities};
         
         common_opts = {'plot_quantity', 'Lifetime', 'normalize', true,...
-            'always_restrict_to_moves', false,...
-            'req_most', false, 'req_num_pts', false};
+            'always_restrict_to_moves', false, 'req_most', false,...
+            'req_num_pts', false, 'min_fits_req', 3, 'recalc_err', false};
+            
         for i=1:numel(cities)
             ax = subplot(4,1,i);
             misc_emissions_analysis.plot_avg_lifetime_change('locations',cities{i},...
@@ -121,19 +143,20 @@ no2_hcho_ratio_plot();
 
     function lifetime_ens_plot()
         fig = figure;
-        subplot_stretch(2,2.6);
+        subplot_stretch(3,2.6);
         
         decr_cities = cities_lifetime_groups.decr_lifetime;
         incr_cities = cities_lifetime_groups.incr_lifetime;
         ccu_cities = cities_lifetime_groups.ccup_lifetime;
         ccd_cities = cities_lifetime_groups.ccdown_lifetime;
-        cities = {decr_cities, incr_cities, ccu_cities, ccd_cities};
+        comp_cities = cities_lifetime_groups.complex_lifetime;
+        cities = {decr_cities, incr_cities, ccu_cities, ccd_cities, comp_cities};
         
         common_opts = {'plot_quantity', 'Lifetime', 'normalize', false,...
             'always_restrict_to_moves', false,...
             'req_most', false, 'req_num_pts', false};
         for i=1:numel(cities)
-            ax = subplot(2,2,i);
+            ax = subplot(3,2,i);
             misc_emissions_analysis.plot_avg_lifetime_change('locations',cities{i},...
                 'plot_averaging', 'None', 'incl_err', false, 'ax', ax, common_opts{:});
             ylabel('Lifetime (h)');
@@ -145,12 +168,23 @@ no2_hcho_ratio_plot();
         end
     end
 
-    function expected_vcds_plot()
+    function expected_vcds_plot(exclude_vis)
+        if nargin < 1
+            exclude_vis = false;
+        end
+        if exclude_vis
+            exclude = cities_lifetime_groups.visually_marginal;
+            save_name = 'expected-vcds-excl-visual';
+        else
+            exclude = [];
+            save_name = 'expected-vcds';
+        end
         % top panel: individual cities' predicted VCDs (normalized?)
         % bottom panel: normalized average MOVES, VCDS, and expected VCDs
-        common_opts = {'normalize', false,...
-            'always_restrict_to_moves', true,...
+        common_opts = {'normalize', false, 'exclude', exclude,...
+            'always_restrict_to_moves', true,... 'req_most', true, 'req_num_pts', true, 'incl_err', false};
             'req_most', true, 'req_num_pts', false, 'incl_err', false};
+            
         [~,yrs,moves_emis] = misc_emissions_analysis.plot_avg_lifetime_change(...
             'plot_averaging','None','plot_quantity','MOVES','no_fig',true,common_opts{:});
         [~,~,vcds] = misc_emissions_analysis.plot_avg_lifetime_change(...
@@ -165,69 +199,39 @@ no2_hcho_ratio_plot();
         norm_vcds = nanmean(vcds,1) ./ nanmean(nanmean(vcds,1));
         
         fig = figure;
-        ax1 = subplot(2,1,1);
-        [~,~,predicted_vcds] = misc_emissions_analysis.plot_avg_lifetime_change(...
-            'plot_averaging','None','plot_quantity','Expected VCDs','ax',ax1,common_opts{:});
+        ax1 = subplot(2,2,1);
+        misc_emissions_analysis.plot_avg_lifetime_change(...
+            'plot_averaging','None','plot_quantity','MOVES','ax',ax1,common_opts{:});
+        set(ax1, 'yscale', 'log', 'ytick', [5e6, 1e7, 5e7], 'yticklabel', {'5 \times 10^6', '10^7', '5 \times 10^7'});
+        ylabel(ax1, 'MOVES emissions (Mg NO_x h^{-1})');
         
-        ax2 = subplot(2,1,2);
+        ax2 = subplot(2,2,2);
+        misc_emissions_analysis.plot_avg_lifetime_change(...
+            'plot_averaging','None','plot_quantity','Lifetime','ax',ax2,common_opts{:});
+        ylabel(ax2, 'Lifetime (h)');
+        
+        ax3 = subplot(2,2,3);
+        [~,~,predicted_vcds] = misc_emissions_analysis.plot_avg_lifetime_change(...
+            'plot_averaging','None','plot_quantity','Expected VCDs','ax',ax3,common_opts{:});
+        ylabel(ax3, 'Predicted NO_x column mass (Mg)')
+        
+        ax4 = subplot(2,2,4);
         l = gobjects(3,1);
         avg_pred_vcds = nanmean(predicted_vcds,1);
         avg_norm_pred_vcds = avg_pred_vcds ./ mean(avg_pred_vcds);
-        l(1)=line(ax2, yrs, avg_norm_pred_vcds, 'color', 'k', 'linewidth', 3);
-        l(2)=line(ax2, yrs, norm_vcds, 'color', 'b', 'linestyle', '--', 'linewidth', 3);
-        l(3)=line(ax2, yrs, norm_moves_emis, 'color', 'r', 'linestyle', '--', 'linewidth', 3);
-        legend(ax2, l, {'Predicted NO_x column','BEHR NO_2 columns','MOVES emissions'}, 'location', 'eastoutside');
+        l(1)=line(ax4, yrs, avg_norm_pred_vcds, 'color', 'k', 'linewidth', 3);
+        l(2)=line(ax4, yrs, norm_vcds, 'color', 'b', 'linestyle', '--', 'linewidth', 3);
+        l(3)=line(ax4, yrs, norm_moves_emis, 'color', 'r', 'linestyle', '--', 'linewidth', 3);
+        legend(ax4, l, {'Predicted NO_x column','BEHR NO_2 columns','MOVES emissions'}, 'location', 'eastoutside');
         
-        subplot_stretch(2,1.3);
+        subplot_stretch(2,2.6);
         
         label_subfigs(fig, 'xshift', 0.2);
         if do_save
-            save_the_fig(fig, 'expected-vcds', false);
+            save_the_fig(fig, save_name, false);
         end
     end
 
-    function no2_hcho_ratio_plot()
-        fig = figure;
-        subplot_stretch(2,1);
-        ax = subplot(2,1,1);
-        misc_emissions_analysis.plot_no2_hcho_vcds_by_group('plot_mode', 'timeser-avg', 'ax', ax);
-        leg = findobj(fig, 'type', 'legend');
-        leg.Location = 'northwest';
-        
-        cities{1} = cities_lifetime_groups.decr_lifetime;
-        cities{2} = cities_lifetime_groups.incr_lifetime;
-        cities{3} = cities_lifetime_groups.ccup_lifetime;
-        cities{4} = cities_lifetime_groups.ccdown_lifetime;
-        
-        colors = {'k','b',[0 0.5 0],'r'};
-        markers = {'o', 'd', 'v', '^'};
-        labels = {'Decreasing', 'Increasing', 'CCU', 'CCD'};
-        
-        common_opts = {'plot_quantity', 'VCDs', 'normalize', true, 'plot_averaging', 'Average',...
-            'always_restrict_to_moves', false, 'no_fig', true, 'exclude_bad_fits', false,...
-            'req_most', false, 'req_num_pts', false, 'incl_err', false};
-        
-        ax = subplot(2,1,2);
-        l = gobjects(numel(cities),1);
-        for i=1:numel(cities)
-            [~,x,y] = misc_emissions_analysis.plot_avg_lifetime_change(...
-                'locations', cities{i}, common_opts{:});
-            l(i) = line(ax, x,y,'color', colors{i}, 'markerfacecolor', colors{i},...
-                'marker', markers{i});
-        end
-        
-        legend(ax, l, labels);
-        ylabel(ax, 'Normalized NO_2 VCDs');
-        
-        label_subfigs(fig, 'xshift', 0.2, 'capital', true);
-        if do_save
-            save_the_fig(fig, 'no2-hcho-ratios', false);
-        end
-    end
-
-    function vcd_trends_by_group()
-        
-    end
 
     function weekend_weekday_diff()
         common_opts = {'plot_quantity', 'Weekend - weekday lifetime', 'plot_averaging', 'Median', 'normalize', false,...

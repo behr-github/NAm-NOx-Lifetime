@@ -4360,10 +4360,10 @@ classdef misc_emissions_analysis
             end
             
             function [locs_wkday, locs_wkend] = load_behr_tau(this_year_window)
-                [sdates, edates] = misc_emissions_analysis.select_start_end_dates(this_year_window);
-                oh_data = load(misc_emissions_analysis.oh_file_name(sdates, edates));
-                locs_wkday = misc_emissions_analysis.append_new_spreadsheet_fields(oh_data.locs_wkday);
-                locs_wkend = misc_emissions_analysis.append_new_spreadsheet_fields(oh_data.locs_wkend);
+                fits = load(misc_emissions_analysis.behr_fit_file_name(this_year_window, 'TWRF'));
+                locs_wkday = misc_emissions_analysis.append_new_spreadsheet_fields(fits.locs);
+                fits = load(misc_emissions_analysis.behr_fit_file_name(this_year_window, 'US'));
+                locs_wkend = misc_emissions_analysis.append_new_spreadsheet_fields(fits.locs);
                 if recalc_err
                     locs_wkday = misc_emissions_analysis.recalc_tau_uncertainty(locs_wkday);
                     locs_wkend = misc_emissions_analysis.recalc_tau_uncertainty(locs_wkend);
@@ -5062,7 +5062,7 @@ classdef misc_emissions_analysis
             
         end
         
-        function plot_box_city_group_vcds(varargin)
+        function fig = plot_box_city_group_vcds(varargin)
             p = advInputParser;
             p.addParameter('groups', {'decr', 'incr', 'ccu', 'ccd'});
             p.addParameter('exclude', []);
